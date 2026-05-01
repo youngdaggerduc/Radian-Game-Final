@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(mkdir -p backend/app/routers frontend)",
+      "Bash(python -m venv backend/venv)",
+      "Bash(./venv/Scripts/pip install *)",
+      "Bash(npm create *)",
+      "Bash(npm install *)",
+      "Bash(./venv/Scripts/python -c \"from app.main import app; print\\('backend import OK'\\)\")"
+    ]
+  }
+}
