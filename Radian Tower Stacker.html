@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Radian Tower Stacker</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#120228; overflow:hidden; font-family:'Segoe UI',sans-serif; user-select:none; }
+#canvas { display:block; position:fixed; inset:0; }
+
+/* HUD */
+#hud {
+  position:fixed; inset:0; pointer-events:none; z-index:10;
+}
+#score-panel {
+  position:fixed; top:16px; left:50%; transform:translateX(-50%);
+  text-align:center; pointer-events:none;
+}
+.game-title {
+  font-size:18px; font-weight:900; letter-spacing:4px; color:#fff;
+  text-transform:uppercase; text-shadow:0 0 16px #cc44ff, 0 2px 0 #7700bb;
+  opacity:0.75;
+}
+#score {
+  font-size:72px; font-weight:900; color:#ffe94d; line-height:1;
+  text-shadow:0 0 40px #ffaa00, 0 4px 0 #aa6600;
+  transition:transform 0.1s;
+}
+#score.pop { transform:scale(1.3); }
+#pts-label { display:none; }
+
+/* Floating popup */
+.pts-popup {
+  position:fixed; font-weight:900; pointer-events:none; z-index:50;
+  animation: floatUp 0.85s ease-out forwards;
+  white-space:nowrap; font-family:'Segoe UI',sans-serif;
+}
+@keyframes floatUp {
+  0%   { opacity:1; transform:translateY(0) scale(1); }
+  55%  { opacity:1; transform:translateY(-55px) scale(1.18); }
+  100% { opacity:0; transform:translateY(-110px) scale(0.8); }
+}
+#combo-text {
+  font-size:28px; font-weight:900; color:#ff44ff;
+  text-shadow:0 0 20px #ff00ff; opacity:0;
+  transition:opacity 0.2s; margin-top:2px;
+}
+
+/* Next piece */
+#next-wrap {
+  position:fixed; top:20px; right:20px; text-align:center;
+}
+#next-label { font-size:10px; color:#aa88dd; letter-spacing:2px; text-transform:uppercase; margin-bottom:6px; }
+#next-canvas { border-radius:10px; border:2px solid rgba(255,255,255,0.12); display:block; }
+
+/* Balance */
+#balance-wrap {
+  position:fixed; bottom:72px; left:50%; transform:translateX(-50%);
+  text-align:center; width:220px;
+}
+#balance-label { font-size:10px; color:#aa88dd; letter-spacing:2px; text-transform:uppercase; margin-bottom:5px; }
+#balance-track {
+  width:220px; height:10px; background:rgba(255,255,255,0.08);
+  border-radius:10px; border:1.5px solid rgba(255,255,255,0.15); position:relative; overflow:visible;
+}
+#balance-fill {
+  position:absolute; top:0; left:0; height:100%;
+  background:linear-gradient(90deg,#44ff88,#ffe94d 50%,#ff4444);
+  border-radius:10px; width:100%;
+}
+#balance-needle {
+  position:absolute; top:-4px; width:4px; height:18px;
+  background:#fff; border-radius:3px; transform:translateX(-50%);
+  box-shadow:0 0 8px #fff; transition:left 0.1s;
+  left:50%;
+}
+
+/* Hint */
+#hint {
+  position:fixed; bottom:28px; left:50%; transform:translateX(-50%);
+  display:flex; align-items:center; gap:10px; color:#aa88dd;
+  font-size:13px; letter-spacing:2px; text-transform:uppercase;
+}
+.key {
+  background:rgba(255,255,255,0.12); border:2px solid rgba(255,255,255,0.25);
+  border-radius:7px; padding:3px 13px; font-weight:700; color:#fff; font-size:13px;
+}
+
+/* Height badge */
+#height-badge {
+  position:fixed; top:20px; left:20px;
+  background:rgba(0,0,0,0.3); border:1.5px solid rgba(255,255,255,0.12);
+  border-radius:12px; padding:10px 16px; text-align:center;
+}
+#height-num { font-size:32px; font-weight:900; color:#44ffcc; text-shadow:0 0 20px #00ffaa; line-height:1; transition:transform 0.12s; }
+#height-num.pop { transform:scale(1.4); }
+#height-lbl { font-size:9px; color:#aa88dd; letter-spacing:2px; text-transform:uppercase; }
+
+/* Screens */
+.screen {
+  position:fixed; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  background:rgba(18,2,40,0.93); z-index:30; pointer-events:all;
+  backdrop-filter:blur(4px);
+}
+.screen-title {
+  font-size:clamp(40px,8vw,80px); font-weight:900; text-transform:uppercase;
+  color:#fff; text-align:center; line-height:1.05; letter-spacing:3px;
+  text-shadow:0 0 60px #cc44ff, 0 5px 0 #660099;
+}
+.screen-title .yl { color:#ffe94d; }
+.screen-sub { font-size:16px; color:#aa88dd; letter-spacing:3px; text-transform:uppercase; margin-top:12px; text-align:center; }
+.big-btn {
+  margin-top:36px; padding:16px 56px; font-size:22px; font-weight:900;
+  letter-spacing:3px; text-transform:uppercase;
+  background:linear-gradient(135deg,#ff44ff,#7700ff);
+  color:#fff; border:none; border-radius:60px; cursor:pointer;
+  box-shadow:0 0 50px #ff00ff88, 0 5px 0 #440088;
+  transition:transform 0.12s, box-shadow 0.12s; pointer-events:all;
+}
+.big-btn:hover { transform:scale(1.07); box-shadow:0 0 70px #ff00ffbb, 0 7px 0 #440088; }
+.big-btn:active { transform:scale(0.96); }
+#final-score-num { font-size:88px; font-weight:900; color:#ffe94d; text-shadow:0 0 50px #ffaa00; margin-top:10px; }
+#start-screen { } 
+#gameover-screen { display:none; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<!-- HUD -->
+<div id="hud">
+  <div id="score-panel">
+    <div class="game-title">Radian Tower Stacker</div>
+    <div id="score">0</div>
+    <div id="pts-label">Height</div>
+    <div id="combo-text">COMBO!</div>
+  </div>
+  <div id="height-badge">
+    <div id="height-num">0</div>
+    <div id="height-lbl">Height</div>
+  </div>
+  <div id="next-wrap">
+    <div id="next-label">Next</div>
+    <canvas id="next-canvas" width="88" height="88"></canvas>
+  </div>
+  <div id="balance-wrap">
+    <div id="balance-label">Balance</div>
+    <div id="balance-track">
+      <div id="balance-fill"></div>
+      <div id="balance-needle"></div>
+    </div>
+  </div>
+  <div id="hint"><span class="key">SPACE</span> to drop · tap anywhere</div>
+</div>
+
+<!-- Screens -->
+<div class="screen" id="start-screen">
+  <div class="screen-title">Radian<br><span class="yl">Tower</span><br>Stacker</div>
+  <div class="screen-sub">Stack crazy scaffold pieces!</div>
+  <button class="big-btn" onclick="startGame()">Play</button>
+</div>
+<div class="screen" id="gameover-screen">
+  <div class="screen-title">Tower<br><span class="yl">Toppled!</span></div>
+  <div id="final-score-num">0</div>
+  <div class="screen-sub">Height Reached</div>
+  <button class="big-btn" onclick="startGame()">Try Again</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════
+// RENDERER + SCENE
+// ═══════════════════════════════════════════════════════
+const canvas = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setClearColor(0x120228);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x120228, 0.018);
+
+let W = window.innerWidth, H = window.innerHeight;
+renderer.setSize(W, H);
+
+// Camera — sits low, looks up at the action
+const camera = new THREE.PerspectiveCamera(65, W/H, 0.1, 400);
+camera.position.set(0, 3, 28);
+camera.lookAt(0, 6, 0);
+
+window.addEventListener('resize', () => {
+  W = window.innerWidth; H = window.innerHeight;
+  renderer.setSize(W, H);
+  camera.aspect = W/H; camera.updateProjectionMatrix();
+});
+
+// ─── LIGHTS ─────────────────────────────────────────────
+const ambient = new THREE.AmbientLight(0xbb66ff, 0.65);
+scene.add(ambient);
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+keyLight.position.set(12, 35, 22);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+Object.assign(keyLight.shadow.camera, { near:0.5, far:120, left:-25, right:25, top:80, bottom:-10 });
+scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0xff44ff, 0.45);
+fillLight.position.set(-12, 8, -5);
+scene.add(fillLight);
+const rimLight = new THREE.DirectionalLight(0x44ffff, 0.3);
+rimLight.position.set(6, 4, -12);
+scene.add(rimLight);
+
+// ═══════════════════════════════════════════════════════
+// PALETTE + MATERIALS
+// ═══════════════════════════════════════════════════════
+const COLORS = [
+  0xff3355, 0xff7700, 0xffe94d, 0x44ff77,
+  0x00d4ff, 0x8855ff, 0xff55cc, 0x55ffee,
+  0xff1166, 0xffcc00, 0x00ffbb, 0xdd33ff,
+  0xff6600, 0x66ff33, 0x3388ff, 0xff0088,
+];
+function rc() { return COLORS[Math.floor(Math.random()*COLORS.length)]; }
+
+function toonMat(color, opts={}) {
+  return new THREE.MeshLambertMaterial({ color, ...opts });
+}
+function outline(mesh, s=1.07) {
+  const m = new THREE.Mesh(mesh.geometry.clone(), new THREE.MeshBasicMaterial({ color:0x110022, side:THREE.BackSide }));
+  m.scale.setScalar(s); mesh.add(m);
+}
+
+// ═══════════════════════════════════════════════════════
+// GEOMETRY HELPERS
+// ═══════════════════════════════════════════════════════
+function box(w,h,d,col) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), toonMat(col));
+  m.castShadow = true; outline(m); return m;
+}
+function cyl(rt,rb,h,segs,col) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,segs), toonMat(col));
+  m.castShadow = true; outline(m); return m;
+}
+function cone(r,h,segs,col) {
+  const m = new THREE.Mesh(new THREE.ConeGeometry(r,h,segs), toonMat(col));
+  m.castShadow = true; outline(m); return m;
+}
+function sphere(r,col) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(r,10,7), toonMat(col));
+  m.castShadow = true; outline(m); return m;
+}
+function torus(r,t,rs,ts,col) {
+  const m = new THREE.Mesh(new THREE.TorusGeometry(r,t,rs,ts), toonMat(col));
+  m.castShadow = true; outline(m); return m;
+}
+
+// ═══════════════════════════════════════════════════════
+// SCAFFOLD PIECE FACTORY — all scaffolding based
+// ═══════════════════════════════════════════════════════
+const TYPES = [
+  'scaf_flat',        // wide flat scaffold platform
+  'scaf_house',       // scaffold frame with house on top
+  'scaf_ladder',      // scaffold tower with ladder up the side
+  'scaf_arch',        // scaffold arch gateway
+  'scaf_flag',        // scaffold mast with flag
+  'scaf_cabin',       // scaffold cabin/site hut
+  'scaf_double',      // double-deck scaffold platform
+  'scaf_crane_arm',   // scaffold with mini tower crane
+  'scaf_sign',        // scaffold billboard/sign
+  'scaf_water_tank',  // scaffold + round water tank on top (non-scaf topper)
+  'scaf_rocket_pad',  // scaffold launchpad with rocket (non-scaf topper)
+];
+
+// Helper: scaffold pole (vertical) - chunkier
+function pole(x,y,z,h,col){ const p=cyl(0.16,0.19,h,6,col); p.position.set(x,y+h/2,z); return p; }
+// Helper: ledger (horizontal bar X-axis) - thicker
+function ledger(x,y,z,w,col){ const l=box(w,0.18,0.18,col); l.position.set(x,y,z); return l; }
+// Helper: transom (horizontal bar Z-axis) - thicker
+function transom(x,y,z,d,col){ const t=box(0.18,0.18,d,col); t.position.set(x,y,z); return t; }
+// Helper: board (scaffold plank) - chunkier
+function board(x,y,z,w,d,col){ const b=box(w,0.25,d,col); b.position.set(x,y,z); return b; }
+// Helper: diagonal brace
+function diag(x,y,z,w,h,col){
+  const len=Math.sqrt(w*w+h*h);
+  const b=box(len,0.15,0.15,col);
+  b.position.set(x+w/2,y+h/2,z);
+  b.rotation.z=Math.atan2(h,w);
+  return b;
+}
+
+function makePiece(type) {
+  const g = new THREE.Group();
+  let a=rc(),b=rc(),c=rc();
+  while(b===a) b=rc();
+  while(c===a||c===b) c=rc();
+  let pw=4.4, ph=2, pd=2.6;
+
+  if(type==='scaf_flat') {
+    // ── Wide flat scaffold platform ──
+    // 4 corner poles
+    for(const [x,z] of [[-2,1],[2,1],[-2,-1],[2,-1]]) g.add(pole(x,0,z,2.2,a));
+    // ledgers at top
+    g.add(ledger(0,2.2,1,4.3,b)); g.add(ledger(0,2.2,-1,4.3,b));
+    // transoms
+    for(const x of[-1.8,0,1.8]) g.add(transom(x,2.2,0,2.2,b));
+    // planks
+    for(const x of[-1.4,-0.5,0.4,1.3]) g.add(board(x,2.35,0,0.75,2.1,c));
+    // mid ledgers
+    g.add(ledger(0,1.1,1,4.3,a)); g.add(ledger(0,1.1,-1,4.3,a));
+    // diag braces
+    g.add(diag(-2,0,1,4,2.2,c)); g.add(diag(-2,0,-1,4,2.2,c));
+    pw=4.4; ph=2.5; pd=2.2;
+
+  } else if(type==='scaf_house') {
+    // ── Scaffold frame + house on top ──
+    for(const [x,z] of [[-2,1],[2,1],[-2,-1],[2,-1]]) g.add(pole(x,0,z,2.8,a));
+    g.add(ledger(0,2.8,1,4.3,b)); g.add(ledger(0,2.8,-1,4.3,b));
+    g.add(ledger(0,1.4,1,4.3,a)); g.add(ledger(0,1.4,-1,4.3,a));
+    for(const x of[-1.5,0,1.5]) g.add(transom(x,2.8,0,2.2,b));
+    for(const x of[-1.4,-0.5,0.4,1.3]) g.add(board(x,2.95,0,0.75,2.1,c));
+    // house on top
+    const walls=box(2.8,1.6,2,b); walls.position.set(0,3.75,0); g.add(walls);
+    for(const x of[-0.8,0.8]) { const win=box(0.5,0.5,2.05,c); win.position.set(x,3.8,0); g.add(win); }
+    const rL=box(3.2,0.22,2.2,c); rL.rotation.z=Math.PI/5; rL.position.set(-0.55,4.95,0); g.add(rL);
+    const rR=box(3.2,0.22,2.2,c); rR.rotation.z=-Math.PI/5; rR.position.set(0.55,4.95,0); g.add(rR);
+    const chimney=box(0.45,0.9,0.45,a); chimney.position.set(1.1,5.5,0.4); g.add(chimney);
+    pw=4.4; ph=5.8; pd=2.2;
+
+  } else if(type==='scaf_ladder') {
+    // ── Scaffold tower + ladder up the side ──
+    for(const [x,z] of [[-1.6,1],[1.6,1],[-1.6,-1],[1.6,-1]]) g.add(pole(x,0,z,5,a));
+    for(const y of[1.2,2.5,3.8]) {
+      g.add(ledger(0,y,1,3.5,b)); g.add(ledger(0,y,-1,3.5,b));
+      for(const x of[-1.2,0,1.2]) g.add(transom(x,y,0,2.2,b));
+    }
+    for(const x of[-1.1,-0.3,0.5,1.3]) g.add(board(x,5.12,0,0.7,2.1,c));
+    // Ladder on right side
+    g.add(ledger(1.9,2.5,0,0.13,c)); // ladder rail L
+    const lrL=cyl(0.07,0.07,5,5,c); lrL.position.set(1.85,2.5,0.45); g.add(lrL);
+    const lrR=cyl(0.07,0.07,5,5,c); lrR.position.set(1.85,2.5,-0.45); g.add(lrR);
+    for(let y=0.5;y<5;y+=0.7){
+      const rung=box(0.12,0.12,1,c); rung.position.set(1.85,y,0); g.add(rung);
+    }
+    // diagonal braces
+    g.add(diag(-1.6,0,1,3.2,5,a));
+    pw=3.8; ph=5.3; pd=2.2;
+
+  } else if(type==='scaf_arch') {
+    // ── Scaffold arch gateway ──
+    for(const [x,z] of [[-2.2,1],[2.2,1],[-2.2,-1],[2.2,-1]]) g.add(pole(x,0,z,4,a));
+    g.add(ledger(0,4,1,4.6,b)); g.add(ledger(0,4,-1,4.6,b));
+    g.add(ledger(0,2,1,4.6,a)); g.add(ledger(0,2,-1,4.6,a));
+    for(const x of[-1.8,-0.6,0.6,1.8]) g.add(board(x,4.15,0,1,2.2,c));
+    // arch made of scaffold segments
+    for(let i=0;i<=7;i++){
+      const ang=i/7*Math.PI;
+      const r=2.1;
+      const seg=cyl(0.13,0.13,0.9,6,b);
+      seg.position.set(Math.cos(ang)*r, Math.sin(ang)*r+4.15, 0);
+      seg.rotation.z=-ang+Math.PI/2;
+      g.add(seg);
+    }
+    // side braces
+    g.add(diag(-2.2,0,1,4.4,4,c)); g.add(diag(-2.2,0,-1,4.4,4,c));
+    pw=4.6; ph=6.3; pd=2.2;
+
+  } else if(type==='scaf_flag') {
+    // ── Scaffold mast + flag ──
+    for(const [x,z] of [[-1.8,0.9],[1.8,0.9],[-1.8,-0.9],[1.8,-0.9]]) g.add(pole(x,0,z,2.2,a));
+    g.add(ledger(0,2.2,0.9,3.8,b)); g.add(ledger(0,2.2,-0.9,3.8,b));
+    for(const x of[-1.2,0,1.2]) g.add(transom(x,2.2,0,1.9,b));
+    for(const x of[-1.1,-0.3,0.5,1.2]) g.add(board(x,2.36,0,0.65,1.8,c));
+    g.add(ledger(0,1.1,0.9,3.8,a)); g.add(ledger(0,1.1,-0.9,3.8,a));
+    // tall flag mast from center
+    const mast=cyl(0.1,0.14,5.5,6,b); mast.position.set(-0.6,4.95,0); g.add(mast);
+    const flag=box(1.8,1.0,0.12,c); flag.position.set(0.3,7,0); g.add(flag);
+    const stripe=box(1.82,0.3,0.13,a); stripe.position.set(0.3,7.35,0); g.add(stripe);
+    const ball=sphere(0.2,c); ball.position.set(-0.6,7.85,0); g.add(ball);
+    // guy-wire braces
+    g.add(diag(-0.6,2.2,0,1.2,5.5,a));
+    pw=3.8; ph=8.0; pd=1.9;
+
+  } else if(type==='scaf_cabin') {
+    // ── Site cabin on scaffold base ──
+    for(const [x,z] of [[-2,1],[2,1],[-2,-1],[2,-1]]) g.add(pole(x,0,z,2.5,a));
+    g.add(ledger(0,2.5,1,4.3,b)); g.add(ledger(0,2.5,-1,4.3,b));
+    g.add(ledger(0,1.25,1,4.3,a)); g.add(ledger(0,1.25,-1,4.3,a));
+    for(const x of[-1.5,0,1.5]) g.add(transom(x,2.5,0,2.2,b));
+    for(const x of[-1.4,-0.5,0.4,1.3]) g.add(board(x,2.65,0,0.75,2.1,c));
+    // site hut
+    const hut=box(3.2,1.8,2,b); hut.position.set(0,3.55,0); g.add(hut);
+    const door=box(0.6,1.1,2.05,a); door.position.set(0.8,3.15,0); g.add(door);
+    const window_=box(0.65,0.55,2.05,c); window_.position.set(-0.7,3.6,0); g.add(window_);
+    const roof=box(3.4,0.2,2.2,c); roof.position.y=4.55; g.add(roof);
+    // diagonal braces on scaffold
+    g.add(diag(-2,0,1,4,2.5,c)); g.add(diag(-2,0,-1,4,2.5,c));
+    pw=4.4; ph=4.7; pd=2.2;
+
+  } else if(type==='scaf_double') {
+    // ── Double-deck scaffold ──
+    for(const [x,z] of [[-2.2,1],[2.2,1],[-2.2,-1],[2.2,-1]]) g.add(pole(x,0,z,4.5,a));
+    for(const y of[2,4.5]){
+      g.add(ledger(0,y,1,4.7,b)); g.add(ledger(0,y,-1,4.7,b));
+      for(const x of[-1.8,-0.6,0.6,1.8]) g.add(transom(x,y,0,2.2,b));
+      for(const x of[-1.5,-0.6,0.3,1.2]) g.add(board(x,y+0.15,0,0.75,2.1,c));
+    }
+    g.add(ledger(0,1,1,4.7,a)); g.add(ledger(0,3.2,1,4.7,a));
+    g.add(ledger(0,1,-1,4.7,a)); g.add(ledger(0,3.2,-1,4.7,a));
+    // staircase between decks
+    for(let i=0;i<5;i++){
+      const step=board(-1.8+i*0.7, 2.2+i*0.46, 0, 0.6, 2,c);
+      step.rotation.z=Math.atan2(2.4,3.5);
+      g.add(step);
+    }
+    // braces
+    g.add(diag(-2.2,0,1,4.4,4.5,c)); g.add(diag(-2.2,0,-1,4.4,4.5,c));
+    pw=4.6; ph=4.7; pd=2.2;
+
+  } else if(type==='scaf_crane_arm') {
+    // ── Scaffold base + tower crane ──
+    for(const [x,z] of [[-1.8,0.9],[1.8,0.9],[-1.8,-0.9],[1.8,-0.9]]) g.add(pole(x,0,z,2.2,a));
+    g.add(ledger(0,2.2,0.9,3.8,b)); g.add(ledger(0,2.2,-0.9,3.8,b));
+    for(const x of[-1.2,0,1.2]) g.add(transom(x,2.2,0,1.9,b));
+    for(const x of[-1.1,-0.3,0.5,1.2]) g.add(board(x,2.36,0,0.65,1.8,c));
+    g.add(ledger(0,1.1,0.9,3.8,a)); g.add(ledger(0,1.1,-0.9,3.8,a));
+    // crane mast (scaffold poles lashed together)
+    for(const [cx,cz] of [[0.2,0.2],[-0.2,0.2],[0.2,-0.2],[-0.2,-0.2]]){
+      const cp=cyl(0.1,0.1,4.5,5,b); cp.position.set(cx,4.45,cz); g.add(cp);
+    }
+    // lashings
+    for(const y of[3,4,5,6]){
+      const lash=box(0.65,0.12,0.65,a); lash.position.set(0,y,0); g.add(lash);
+    }
+    // jib arm
+    const jib=box(4,0.18,0.18,c); jib.position.set(1.5,6.8,0); g.add(jib);
+    const cjib=box(1.4,0.18,0.18,a); cjib.position.set(-1.1,6.8,0); g.add(cjib);
+    const hook=sphere(0.28,c); hook.position.set(3,5.6,0); g.add(hook);
+    const hcable=cyl(0.06,0.06,1.3,4,b); hcable.position.set(3,6.25,0); g.add(hcable);
+    pw=4,ph=7; pd=1.9;
+
+  } else if(type==='scaf_sign') {
+    // ── Scaffold billboard ──
+    for(const [x,z] of [[-2,0.8],[2,0.8],[-2,-0.8],[2,-0.8]]) g.add(pole(x,0,z,5.5,a));
+    g.add(ledger(0,2.5,0.8,4.3,a)); g.add(ledger(0,2.5,-0.8,4.3,a));
+    for(const x of[-1.5,0,1.5]) g.add(transom(x,2.5,0,1.7,a));
+    for(const x of[-1.4,-0.5,0.4,1.3]) g.add(board(x,2.65,0,0.75,1.6,c));
+    g.add(ledger(0,1.2,0.8,4.3,b)); g.add(ledger(0,1.2,-0.8,4.3,b));
+    // billboard sign frame
+    const frame=box(4.4,2.4,0.18,b); frame.position.set(0,4.7,0); g.add(frame);
+    const panel=box(4,2,0.22,c); panel.position.set(0,4.7,0.1); g.add(panel);
+    const stripe2=box(4.1,0.45,0.23,a); stripe2.position.set(0,4.4,0.1); g.add(stripe2);
+    // braces
+    for(const x of[-2,2]){
+      const br=box(0.15,0.15,0.9,a); br.position.set(x,4.7,0.5); g.add(br);
+    }
+    pw=4.4; ph=5.9; pd=1.8;
+
+  } else if(type==='scaf_water_tank') {
+    // ── Scaffold tower + water tank (non-scaf topper) ──
+    for(const [x,z] of [[-1.6,0.9],[1.6,0.9],[-1.6,-0.9],[1.6,-0.9]]) g.add(pole(x,0,z,4,a));
+    for(const y of[1.5,3]){
+      g.add(ledger(0,y,0.9,3.4,b)); g.add(ledger(0,y,-0.9,3.4,b));
+      for(const x of[-1.1,0,1.1]) g.add(transom(x,y,0,1.9,b));
+    }
+    for(const x of[-1.1,-0.3,0.5,1.2]) g.add(board(x,3.15,0,0.65,1.8,c));
+    g.add(ledger(0,0.75,0.9,3.4,a)); g.add(ledger(0,2.2,0.9,3.4,a));
+    g.add(ledger(0,0.75,-0.9,3.4,a)); g.add(ledger(0,2.2,-0.9,3.4,a));
+    // water tank
+    const tank=cyl(1.1,1.1,1.6,14,b); tank.position.set(0,4.8,0); g.add(tank);
+    const lid=cyl(1.2,1.2,0.14,14,c); lid.position.set(0,5.65,0); g.add(lid);
+    const pipe=cyl(0.15,0.15,0.9,6,a); pipe.position.set(0.9,4.3,0); g.add(pipe);
+    g.add(diag(-1.6,0,0.9,3.2,4,c));
+    pw=3.6; ph=5.8; pd=2;
+
+  } else if(type==='scaf_rocket_pad') {
+    // ── Scaffold launch pad + rocket (non-scaf topper) ──
+    for(const [x,z] of [[-2,1],[2,1],[-2,-1],[2,-1]]) g.add(pole(x,0,z,2.8,a));
+    g.add(ledger(0,2.8,1,4.3,b)); g.add(ledger(0,2.8,-1,4.3,b));
+    g.add(ledger(0,1.4,1,4.3,a)); g.add(ledger(0,1.4,-1,4.3,a));
+    for(const x of[-1.5,0,1.5]) g.add(transom(x,2.8,0,2.2,b));
+    for(const x of[-1.4,-0.5,0.4,1.3]) g.add(board(x,2.95,0,0.75,2.1,c));
+    // launch tower arms
+    const arm1=box(1.4,0.15,0.15,a); arm1.position.set(-0.5,3.7,0); arm1.rotation.z=0.4; g.add(arm1);
+    const arm2=box(1.4,0.15,0.15,a); arm2.position.set(0.5,3.7,0); arm2.rotation.z=-0.4; g.add(arm2);
+    // rocket
+    const rbody=cyl(0.6,0.75,3,10,b); rbody.position.set(0,5.3,0); g.add(rbody);
+    const rnose=cone(0.6,1.4,10,c); rnose.position.set(0,7.4,0); g.add(rnose);
+    for(let i=0;i<3;i++){
+      const ang=i/3*Math.PI*2;
+      const fin=box(0.18,1,0.5,c);
+      fin.position.set(Math.cos(ang)*0.8,3.9,Math.sin(ang)*0.8);
+      fin.rotation.y=ang; g.add(fin);
+    }
+    const win=sphere(0.24,a); win.position.set(0.55,5.5,0.55); g.add(win);
+    pw=4.4; ph=8.1; pd=2.2;
+  }
+
+  g.userData.pw=pw; g.userData.ph=ph; g.userData.pd=pd;
+  return g;
+}
+
+// ═══════════════════════════════════════════════════════
+// WORLD OBJECTS
+// ═══════════════════════════════════════════════════════
+// Ground disc
+(function buildGround(){
+  const disc=new THREE.Mesh(
+    new THREE.CylinderGeometry(11,13,1.4,40),
+    toonMat(0x2d0d5c)
+  );
+  disc.position.y=-0.7; disc.receiveShadow=true; outline(disc,1.015);
+  scene.add(disc);
+
+  // checkerboard ring detail
+  for(let i=0;i<20;i++){
+    const ang=i/20*Math.PI*2;
+    const tile=new THREE.Mesh(
+      new THREE.BoxGeometry(1.8,0.05,1.8),
+      toonMat(i%2===0?0x3d1570:0x4a1a88)
+    );
+    tile.position.set(Math.cos(ang)*7,0.02,Math.sin(ang)*7);
+    tile.rotation.y=ang;
+    scene.add(tile);
+  }
+
+  // grid lines
+  const gridMat=new THREE.MeshBasicMaterial({color:0x6633aa,transparent:true,opacity:0.25});
+  for(let i=-6;i<=6;i+=1.5){
+    const lh=new THREE.Mesh(new THREE.BoxGeometry(22,0.03,0.03),gridMat);
+    lh.position.set(0,0.02,i); scene.add(lh);
+    const lv=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.03,22),gridMat);
+    lv.position.set(i,0.02,0); scene.add(lv);
+  }
+})();
+
+// Glow ring on ground
+(function buildGlowRing(){
+  const geo = new THREE.RingGeometry(9.5, 11.5, 48);
+  const mat = new THREE.MeshBasicMaterial({ color:0x7733ff, side:THREE.DoubleSide, transparent:true, opacity:0.18 });
+  const ring = new THREE.Mesh(geo, mat);
+  ring.rotation.x = -Math.PI/2;
+  ring.position.y = 0.05;
+  scene.add(ring);
+  // Inner glow
+  const geo2 = new THREE.RingGeometry(0, 9.5, 48);
+  const mat2 = new THREE.MeshBasicMaterial({ color:0x4411aa, side:THREE.DoubleSide, transparent:true, opacity:0.12 });
+  const ring2 = new THREE.Mesh(geo2, mat2);
+  ring2.rotation.x = -Math.PI/2;
+  ring2.position.y = 0.04;
+  scene.add(ring2);
+})();
+
+// Stars
+(function buildStars(){
+  const pos=[];
+  for(let i=0;i<500;i++){
+    pos.push((Math.random()-0.5)*280, Math.random()*100+8, (Math.random()-0.5)*280);
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  const sizes=new Float32Array(500).map(()=>Math.random()*0.35+0.05);
+  geo.setAttribute('size',new THREE.Float32BufferAttribute(sizes,1));
+  scene.add(new THREE.Points(geo,
+    new THREE.PointsMaterial({color:0xffffff,size:0.28,transparent:true,opacity:0.7})
+  ));
+})();
+
+// Floating background scaffold silhouettes removed
+
+// ═══════════════════════════════════════════════════════
+// CRANE / SWING CRANE ARM
+// ═══════════════════════════════════════════════════════
+// Visual crane arm that the swinging piece hangs from
+const craneGroup = new THREE.Group();
+scene.add(craneGroup);
+let craneCable = null;
+function buildCrane(y) {
+  while(craneGroup.children.length) craneGroup.remove(craneGroup.children[0]);
+  // Vertical post anchored at tower top
+  const postH = 4;
+  const post = cyl(0.18, 0.22, postH, 7, 0x9966ff);
+  post.position.y = y + postH/2;
+  craneGroup.add(post);
+  // Horizontal arm
+  const arm = box(14, 0.2, 0.2, 0x9966ff);
+  arm.position.y = y + postH;
+  craneGroup.add(arm);
+  // End caps on arm
+  const capL = sphere(0.28, 0xcc88ff); capL.position.set(-7, y+postH, 0); craneGroup.add(capL);
+  const capR = sphere(0.28, 0xcc88ff); capR.position.set(7, y+postH, 0); craneGroup.add(capR);
+  // Cable placeholder
+  craneCable = cyl(0.05, 0.05, 1, 4, 0xdd99ff);
+  craneGroup.add(craneCable);
+}
+
+// ═══════════════════════════════════════════════════════
+// PARTICLES
+// ═══════════════════════════════════════════════════════
+let particles = [];
+function spawnBurst(x, y, z, n, cols) {
+  for(let i=0;i<n;i++){
+    const r = Math.random()*0.22+0.08;
+    const m = new THREE.Mesh(
+      Math.random()<0.5 ? new THREE.SphereGeometry(r,6,4) : new THREE.BoxGeometry(r*2,r*2,r*2),
+      new THREE.MeshToonMaterial({color:cols[Math.floor(Math.random()*cols.length)]})
+    );
+    m.position.set(x+(Math.random()-0.5)*2.5, y+(Math.random()-0.5)*1, z+(Math.random()-0.5)*1.5);
+    const v = new THREE.Vector3(
+      (Math.random()-0.5)*0.28, Math.random()*0.35+0.1, (Math.random()-0.5)*0.18
+    );
+    scene.add(m);
+    particles.push({mesh:m, vel:v, life:1, spin:new THREE.Vector3((Math.random()-0.5)*0.15,(Math.random()-0.5)*0.15,(Math.random()-0.5)*0.15)});
+  }
+}
+function spawnStarBurst(x,y,z) {
+  // Star-shaped burst for perfect drops
+  for(let i=0;i<24;i++){
+    const ang = i/24*Math.PI*2;
+    const r = Math.random()*0.15+0.12;
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r,5,4), new THREE.MeshToonMaterial({color:0xffe94d}));
+    m.position.set(x,y,z);
+    const speed = Math.random()*0.3+0.15;
+    const v = new THREE.Vector3(Math.cos(ang)*speed, Math.sin(ang)*speed+0.1, (Math.random()-0.5)*0.2);
+    scene.add(m);
+    particles.push({mesh:m, vel:v, life:1.4, spin:new THREE.Vector3(0,0,0)});
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// NEXT-PIECE CANVAS
+// ═══════════════════════════════════════════════════════
+const nextCtx = document.getElementById('next-canvas').getContext('2d');
+function drawNextPiece(type) {
+  const ctx = nextCtx;
+  ctx.clearRect(0,0,88,88);
+  ctx.fillStyle = 'rgba(30,0,60,0.88)';
+  ctx.fillRect(0,0,88,88);
+
+  // All icons drawn as scaffolding silhouettes
+  ctx.strokeStyle = '#cc88ff'; ctx.lineWidth = 2;
+  const S = ctx.strokeStyle;
+
+  function poles(xs, y0, y1, col) {
+    ctx.strokeStyle = col||'#8855ff'; ctx.lineWidth=2;
+    for(const x of xs){ ctx.beginPath(); ctx.moveTo(x,y0); ctx.lineTo(x,y1); ctx.stroke(); }
+  }
+  function hbar(x0,x1,y,col){
+    ctx.strokeStyle=col||'#ff7700'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(x0,y); ctx.lineTo(x1,y); ctx.stroke();
+  }
+  function plank(x0,x1,y,col){
+    ctx.fillStyle=col||'#ffe94d';
+    ctx.fillRect(x0,y-3,x1-x0,6);
+  }
+  function dline(x0,y0,x1,y1,col){
+    ctx.strokeStyle=col||'#44ffcc'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.stroke();
+  }
+
+  const shapes = {
+    scaf_flat: ()=>{
+      poles([18,70],[68,20],'#8855ff');
+      hbar(14,74,20,'#ff7700'); hbar(14,74,44,'#ff7700');
+      plank(16,72,20,'#ffe94d');
+      dline(18,44,70,20,'#44ffcc');
+    },
+    scaf_house: ()=>{
+      poles([18,70],[75,28],'#8855ff');
+      hbar(14,74,28,'#ff7700'); hbar(14,74,52,'#ff7700');
+      plank(16,72,28,'#ffe94d');
+      // house
+      ctx.strokeStyle='#ff55cc'; ctx.lineWidth=2;
+      ctx.strokeRect(26,10,36,18);
+      ctx.beginPath(); ctx.moveTo(44,4); ctx.lineTo(22,10); ctx.lineTo(66,10); ctx.closePath(); ctx.stroke();
+    },
+    scaf_ladder: ()=>{
+      poles([18,66],[78,14],'#8855ff');
+      for(const y of[28,44,60]) hbar(14,70,y,'#ff7700');
+      plank(16,68,14,'#ffe94d');
+      // ladder on right
+      ctx.strokeStyle='#44ff77'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(72,14); ctx.lineTo(72,78); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(80,14); ctx.lineTo(80,78); ctx.stroke();
+      for(let y=22;y<78;y+=10){ ctx.beginPath(); ctx.moveTo(72,y); ctx.lineTo(80,y); ctx.stroke(); }
+    },
+    scaf_arch: ()=>{
+      poles([14,74],[76,20],'#8855ff');
+      hbar(10,78,20,'#ff7700'); hbar(10,78,48,'#ff7700');
+      plank(12,76,20,'#ffe94d');
+      ctx.strokeStyle='#00d4ff'; ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.arc(44,20,30,Math.PI,0); ctx.stroke();
+    },
+    scaf_flag: ()=>{
+      poles([16,66],[76,28],'#8855ff');
+      hbar(12,70,28,'#ff7700'); hbar(12,70,52,'#ff7700');
+      plank(14,68,28,'#ffe94d');
+      ctx.strokeStyle='#ff7700'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(30,28); ctx.lineTo(30,6); ctx.stroke();
+      ctx.fillStyle='#ff3355'; ctx.fillRect(30,6,22,12);
+      ctx.fillStyle='#ffe94d'; ctx.fillRect(30,12,22,5);
+    },
+    scaf_cabin: ()=>{
+      poles([16,72],[76,28],'#8855ff');
+      hbar(12,76,28,'#ff7700'); hbar(12,76,52,'#ff7700');
+      plank(14,74,28,'#ffe94d');
+      ctx.fillStyle='#4422aa'; ctx.fillRect(22,10,44,18);
+      ctx.strokeStyle='#ff55cc'; ctx.lineWidth=2; ctx.strokeRect(22,10,44,18);
+      ctx.fillStyle='#00d4ff'; ctx.fillRect(30,14,10,8);
+      ctx.fillStyle='#ff7700'; ctx.fillRect(48,16,8,12);
+    },
+    scaf_double: ()=>{
+      poles([16,72],[78,16],'#8855ff');
+      for(const y of[16,42,66]) { hbar(12,76,y,'#ff7700'); plank(14,74,y,'#ffe94d'); }
+      dline(16,66,72,42,'#44ffcc');
+      dline(16,42,72,16,'#44ffcc');
+    },
+    scaf_crane_arm: ()=>{
+      poles([16,66],[76,28],'#8855ff');
+      hbar(12,70,28,'#ff7700'); hbar(12,70,52,'#ff7700');
+      plank(14,68,28,'#ffe94d');
+      // crane mast
+      ctx.strokeStyle='#ff7700'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(40,28); ctx.lineTo(40,8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(40,8); ctx.lineTo(72,16); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(40,8); ctx.lineTo(24,14); ctx.stroke();
+      ctx.fillStyle='#ff3355'; ctx.beginPath(); ctx.arc(68,22,5,0,Math.PI*2); ctx.fill();
+    },
+    scaf_sign: ()=>{
+      poles([16,72],[78,28],'#8855ff');
+      hbar(12,76,28,'#ff7700'); hbar(12,76,54,'#ff7700');
+      plank(14,74,28,'#ffe94d');
+      ctx.fillStyle='#3322aa'; ctx.fillRect(18,8,52,20);
+      ctx.strokeStyle='#ff55cc'; ctx.lineWidth=2; ctx.strokeRect(18,8,52,20);
+      ctx.fillStyle='#ffe94d'; ctx.fillRect(20,10,48,8);
+    },
+    scaf_water_tank: ()=>{
+      poles([18,70],[74,24],'#8855ff');
+      for(const y of[24,48]) hbar(14,74,y,'#ff7700');
+      plank(16,72,24,'#ffe94d');
+      ctx.fillStyle='#0088cc';
+      ctx.beginPath(); ctx.arc(44,12,14,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#44ffcc'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(44,12,14,0,Math.PI*2); ctx.stroke();
+    },
+    scaf_rocket_pad: ()=>{
+      poles([16,72],[74,28],'#8855ff');
+      hbar(12,76,28,'#ff7700'); hbar(12,76,52,'#ff7700');
+      plank(14,74,28,'#ffe94d');
+      ctx.fillStyle='#ff3355';
+      ctx.beginPath(); ctx.moveTo(44,4); ctx.lineTo(38,18); ctx.lineTo(50,18); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='#00d4ff'; ctx.fillRect(39,18,10,12);
+      ctx.fillStyle='#ff7700'; ctx.fillRect(36,28,5,5); ctx.fillRect(47,28,5,5);
+    },
+  };
+  (shapes[type]||(()=>{ plank(14,74,44,'#ffe94d'); poles([18,70],[74,22],'#8855ff'); hbar(14,74,22,'#ff7700'); }))();
+
+  ctx.fillStyle='rgba(255,255,255,0.45)';
+  ctx.font='bold 8px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(type.replace('scaf_','').replace(/_/g,' ').toUpperCase(), 44, 85);
+}
+
+// ═══════════════════════════════════════════════════════
+// GAME STATE
+// ═══════════════════════════════════════════════════════
+let gameActive=false, score=0, combo=0;
+let stackedPieces=[], towerHeight=0;
+let towerLeanX=0, towerVelocity=0, towerAngle=0;
+let currentPiece=null, nextType=null;
+let swingAngle=0, swingSpeed=0.022, swingAmp=5.8;
+let swingHeight=0;
+let dropping=false, dropPiece=null, dropVel=0;
+let camTargetY=10;
+let screenShake=0, shakeX=0, shakeY=0;
+let gameOverDelay=0;
+let frameN=0;
+const towerGroup=new THREE.Group();
+scene.add(towerGroup);
+
+// ═══════════════════════════════════════════════════════
+// GAME FUNCTIONS
+// ═══════════════════════════════════════════════════════
+function spawnNext() {
+  if(currentPiece){ scene.remove(currentPiece); currentPiece=null; }
+  const type = nextType||TYPES[Math.floor(Math.random()*TYPES.length)];
+  nextType = TYPES[Math.floor(Math.random()*TYPES.length)];
+  drawNextPiece(nextType);
+  currentPiece = makePiece(type);
+  swingAngle = 0;
+  // Don't reset dropping here — it resets after drop piece lands
+  const pieceHalf = currentPiece.userData.ph / 2;
+  swingHeight = towerHeight + pieceHalf + 1.5;
+  currentPiece.position.set(0, swingHeight, 0);
+  scene.add(currentPiece);
+  buildCrane(swingHeight + pieceHalf + 0.3);
+}
+
+function drop() {
+  if(!currentPiece || !gameActive) return; // allow re-drop even if dropping=true from previous
+  if(dropping) return; // still waiting for last drop to land
+  dropping = true;
+  dropPiece = currentPiece;
+  dropVel = 0;
+  currentPiece = null;
+  // Spawn next swinging piece after short delay
+  setTimeout(spawnNext, 450);
+}
+
+// Spawn floating +pts popup at screen-center-ish with slight random offset
+function spawnPtsPopup(pts, kind) {
+  const el = document.createElement('div');
+  el.className = 'pts-popup';
+  const cx = window.innerWidth/2 + (Math.random()-0.5)*120;
+  const cy = window.innerHeight/2 + (Math.random()-0.5)*60;
+  el.style.left = cx+'px';
+  el.style.top  = cy+'px';
+  if(kind==='perfect'){
+    el.style.fontSize='38px';
+    el.style.color='#ffffff';
+    el.style.textShadow='0 0 30px #ff88ff, 0 0 12px #ff44ff';
+    el.textContent = '★ PERFECT! +'+pts;
+  } else if(kind==='combo'){
+    el.style.fontSize='30px';
+    el.style.color='#ff44ff';
+    el.style.textShadow='0 0 24px #ff00ff';
+    el.textContent = combo+'× COMBO +'+pts;
+  } else if(kind==='miss'){
+    el.style.fontSize='22px';
+    el.style.color='#ff4444';
+    el.style.textShadow='0 0 16px #ff0000';
+    el.textContent = 'WOBBLY!';
+  } else {
+    el.style.fontSize='28px';
+    el.style.color='#ffe94d';
+    el.style.textShadow='0 0 20px #ffaa00';
+    el.textContent = '+'+pts;
+  }
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(), 900);
+}
+
+function landPiece(p) {
+  const lx = p.position.x;
+  const ph = p.userData.ph;
+  const topW = stackedPieces.length ? stackedPieces[stackedPieces.length-1].userData.pw : 5.2;
+  const overhang = Math.abs(lx) / Math.max(topW/2, 0.5);
+
+  // No instant game-over on miss — just heavy lean penalty
+  const isMiss = overhang > 0.9;
+
+  // Lean scales with tower height — more floors = more tippy
+  const heightFactor = 1 + stackedPieces.length * 0.05;
+  // towerLeanX is the persistent center-of-mass offset
+  towerLeanX += lx * 0.18 * heightFactor;
+  towerVelocity += lx * 0.04 * heightFactor;
+
+  // Score / height
+  const perf = overhang < 0.12;
+  const good = overhang < 0.4;
+  let pts = Math.max(5, Math.round((1 - Math.min(overhang,1)) * 130) + 10);
+  if(perf){ pts += 70; combo++; }
+  else if(good){ pts += 20; combo = Math.max(0, combo-1); }
+  else { combo = 0; pts = Math.max(5, pts-20); }
+  if(combo >= 2) pts = Math.round(pts * (1 + combo*0.4));
+  score += pts;
+
+  // Update score display
+  const sc = document.getElementById('score');
+  sc.textContent = score;
+  sc.classList.remove('pop'); void sc.offsetWidth; sc.classList.add('pop');
+  setTimeout(()=>sc.classList.remove('pop'), 180);
+
+  // Height badge
+  const floors = stackedPieces.length + 1;
+  const hn = document.getElementById('height-num');
+  hn.textContent = floors;
+  hn.classList.remove('pop'); void hn.offsetWidth; hn.classList.add('pop');
+  setTimeout(()=>hn.classList.remove('pop'), 180);
+
+  // Floating popup
+  if(perf) spawnPtsPopup(pts,'perfect');
+  else if(combo>=2) spawnPtsPopup(pts,'combo');
+  else if(isMiss) spawnPtsPopup(pts,'miss');
+  else spawnPtsPopup(pts,'normal');
+
+  // Combo HUD
+  if(combo>=2){
+    const el=document.getElementById('combo-text');
+    el.textContent=`${combo}× COMBO!`;
+    el.style.opacity='1';
+    clearTimeout(el._t);
+    el._t=setTimeout(()=>el.style.opacity='0',900);
+  }
+
+  // Particles
+  const burst=[0xffe94d,0xff44ff,0x44ffcc,0xff4444,0x44ff77];
+  spawnBurst(lx, towerHeight+ph/2, 0, perf?30:isMiss?8:18, burst);
+  if(perf){ spawnStarBurst(lx,towerHeight+ph/2,0); screenShake=0.7; }
+  else if(isMiss){ screenShake=0.5; }
+  else { screenShake=0.25; }
+
+  // Stack piece
+  p.position.set(lx, towerHeight+ph/2, 0);
+  towerHeight += ph;
+  stackedPieces.push(p);
+  towerGroup.add(p);
+
+  // Camera auto-follows via towerHeight in loop
+  // Swing gets faster + tighter as tower grows
+  swingSpeed = Math.min(0.055, 0.022 + stackedPieces.length*0.0022);
+  swingAmp   = Math.max(3.2, 5.8 - stackedPieces.length*0.07);
+}
+
+function triggerGameOver() {
+  gameActive=false;
+  if(dropPiece){ scene.remove(dropPiece); dropPiece=null; }
+  if(currentPiece){ scene.remove(currentPiece); currentPiece=null; }
+  spawnBurst(0, towerHeight/2, 0, 80, [0xff3355,0xff7700,0xffe94d,0xff00ff,0x44ffcc]);
+  screenShake=2.5;
+  gameOverDelay=100;
+}
+
+function startGame() {
+  for(const p of stackedPieces) towerGroup.remove(p);
+  stackedPieces=[]; towerHeight=0;
+  towerLeanX=0; towerVelocity=0; towerAngle=0;
+  towerGroup.rotation.z=0;
+  score=0; combo=0;
+  swingSpeed=0.022; swingAmp=5.8;
+  swingAngle=0; dropping=false;
+  dropPiece=null; gameOverDelay=0;
+  camTargetY = 4;
+  camera.position.set(0, 3, 28);
+  camera.lookAt(0, 7, 0);
+  document.getElementById('score').textContent='0';
+  document.getElementById('height-num').textContent='0';
+  document.getElementById('combo-text').style.opacity='0';
+  document.getElementById('start-screen').style.display='none';
+  document.getElementById('gameover-screen').style.display='none';
+  gameActive=true;
+  nextType=TYPES[Math.floor(Math.random()*TYPES.length)];
+  // First base piece
+  const base = makePiece('scaf_flat');
+  base.position.y = base.userData.ph / 2;
+  towerHeight = base.userData.ph;
+  stackedPieces.push(base);
+  towerGroup.add(base);
+  spawnNext();
+}
+
+// ═══════════════════════════════════════════════════════
+// INPUT
+// ═══════════════════════════════════════════════════════
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){ e.preventDefault(); drop(); }
+});
+document.getElementById('canvas').addEventListener('pointerdown',()=>{ drop(); });
+
+// ═══════════════════════════════════════════════════════
+// MAIN LOOP
+// ═══════════════════════════════════════════════════════
+const clock=new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),0.05);
+  frameN++;
+
+  // ── Swing piece ──
+  if(currentPiece&&gameActive){
+    swingAngle+=swingSpeed;
+    const sx=Math.sin(swingAngle)*swingAmp;
+    // swingHeight is piece center Y — keep it constant while swinging
+    currentPiece.position.set(sx, swingHeight, 0);
+    currentPiece.rotation.z=Math.sin(swingAngle)*0.22;
+    currentPiece.rotation.y=frameN*0.01;
+
+    // Cable swings with piece — from arm (fixed center) down to piece top
+    if(craneCable && craneGroup.children.length >= 2){
+      const armY = craneGroup.children[1].position.y; // arm Y is fixed
+      const pieceTopY = swingHeight + currentPiece.userData.ph * 0.5 + 0.1;
+      const cableLen = Math.max(0.1, armY - pieceTopY);
+      craneCable.scale.y = cableLen;
+      craneCable.position.set(sx, pieceTopY + cableLen / 2, 0);
+    }
+  }
+
+  // ── Drop ──
+  if(dropPiece){
+    dropVel+=0.055;
+    dropPiece.position.y-=dropVel;
+    // Trail particles every few frames
+    if(frameN%3===0){
+      spawnBurst(dropPiece.position.x, dropPiece.position.y+dropPiece.userData.ph*0.5, 0, 3, [0xcc88ff,0xffffff,0xff88ff]);
+    }
+    const land=towerHeight+dropPiece.userData.ph/2;
+    if(dropPiece.position.y<=land){
+      dropPiece.position.y=land;
+      const p=dropPiece; dropPiece=null;
+      dropping=false; // now safe to drop again
+      if(gameActive) landPiece(p);
+    }
+  }
+
+  // ── Tower physics — lean accumulates, scales with height, actually topples ──
+  const hFactor = 1 + stackedPieces.length * 0.06;
+  towerLeanX *= 0.993;
+  // Lean pushes the tower over; weak restoring force keeps it upright when balanced
+  towerVelocity += towerLeanX * 0.009 * hFactor;
+  towerVelocity -= towerAngle * 0.002;  // weak restoring (not enough to fully correct bad lean)
+  towerVelocity *= 0.965;
+  towerAngle += towerVelocity;
+  towerGroup.rotation.z = towerAngle * (Math.PI / 180);
+  // Topple threshold shrinks as tower grows
+  const toppleThresh = Math.max(22, 38 - stackedPieces.length * 0.8);
+  if(gameActive && Math.abs(towerAngle) > toppleThresh) triggerGameOver();
+
+  // Balance needle
+  const leanNorm = Math.max(0,Math.min(1, 0.5 + towerLeanX/10));
+  document.getElementById('balance-needle').style.left=(leanNorm*100)+'%';
+
+  // ── Particles ──
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.life-=0.025;
+    p.vel.y-=0.013;
+    p.mesh.position.add(p.vel);
+    p.mesh.rotation.x+=p.spin.x; p.mesh.rotation.y+=p.spin.y; p.mesh.rotation.z+=p.spin.z;
+    p.mesh.material.opacity=Math.max(0,p.life);
+    p.mesh.material.transparent=true;
+    if(p.life<=0){ scene.remove(p.mesh); particles.splice(i,1); }
+  }
+
+  // ── Camera — stays low, looks up to show full tower + swing piece ──
+  // Camera Z pulls back as tower grows so whole tower fits in view
+  const camZ = Math.max(28, 28 + towerHeight * 0.8);
+  // Camera Y stays at ~40% of tower height so we see base + top
+  const camTarget = Math.max(3, towerHeight * 0.4);
+  camera.position.y += (camTarget - camera.position.y) * 0.06;
+  camera.position.z += (camZ - camera.position.z) * 0.06;
+  // Always look at the swinging piece height
+  const lookAt = swingHeight > 0 ? swingHeight * 0.85 : towerHeight + 2;
+  camera.lookAt(shakeX, lookAt, 0);
+
+  // ── Screen shake ──
+  if(screenShake>0){
+    shakeX=(Math.random()-0.5)*screenShake*0.4;
+    camera.position.x=shakeX;
+    screenShake-=0.055;
+    if(screenShake<=0){ screenShake=0; camera.position.x=0; shakeX=0; }
+  }
+
+  // ── BG color breathe + glow ring pulse ──
+  if(frameN%2===0){
+    const t=frameN*0.003;
+    renderer.setClearColor(new THREE.Color(
+      0.10+Math.sin(t)*0.03,
+      0.02,
+      0.28+Math.sin(t*0.7)*0.06
+    ));
+  }
+
+  // ── Game over delay ──
+  if(gameOverDelay>0){
+    gameOverDelay--;
+    if(gameOverDelay===0){
+      document.getElementById('final-score-num').textContent=score;
+      document.getElementById('gameover-screen').style.display='flex';
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
