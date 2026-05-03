@@ -31,6 +31,10 @@ export default function Game() {
   const comboTextRef = useRef(null)
   const balanceNeedleRef = useRef(null)
   const finalScoreRef = useRef(null)
+  const finalHeightRef = useRef(null)
+  const finalPerfectRef = useRef(null)
+  const finalComboRef = useRef(null)
+  const finalTierRef = useRef(null)
 
   const [showStart, setShowStart] = useState(true)
   const [showGameOver, setShowGameOver] = useState(false)
@@ -575,6 +579,10 @@ export default function Game() {
       towerLeanX: 0,
       towerVelocity: 0,
       towerAngle: 0,
+      // Windowed recent landing X positions (world / tower-local equivalent).
+      // We average these for the cumulative-bias check so leftward corrections
+      // actually shrink the drift instead of fighting an unbounded history sum.
+      recentDrifts: [],
       currentPiece: null,
       nextType: null,
       swingAngle: 0,
@@ -593,9 +601,52 @@ export default function Game() {
       flash: 0,
       projectiles: [],
       projectileTimer: 240,
+      projectileWarnings: [],
+      shockwaves: [],
+      biasWarnCooldown: 0,
+      tier: 0,
+      perfectCount: 0,
+      maxCombo: 0,
+      tierReached: 0,
+      framesSinceLand: 0,
+      lastLandedPiece: null,
+      lastLandedSquash: 0,
     }
     const towerGroup = new THREE.Group()
     scene.add(towerGroup)
+
+    const TIER_NAMES = [
+      'WARMUP', 'STEADY', 'WOBBLER', 'SKYWARD', 'SCAFFOLD MASTER',
+      'CLOUDSCRAPER', 'STRATOSPHERE', 'ASCENDED', 'IMPOSSIBLE', 'RADIANT',
+    ]
+
+    // Arcade tier-up banner — fires when stackedPieces crosses a 25-floor boundary.
+    function spawnTierBanner(tier) {
+      const el = document.createElement('div')
+      el.className = 'tier-banner'
+      const name = TIER_NAMES[Math.min(tier, TIER_NAMES.length - 1)]
+      el.innerHTML = `TIER ${tier}<span class="sub">${name}</span>`
+      document.body.appendChild(el)
+      setTimeout(() => el.remove(), 1500)
+      // Punchy feedback so the difficulty step lands.
+      state.screenShake = Math.max(state.screenShake, 0.6)
+      state.flash = Math.max(state.flash, 0.45)
+    }
+
+    // Arcade-style "STACK LEFT!" / "STACK RIGHT!" warning when cumulative bias is past
+    // its threshold. dir = -1 means tower is leaning left → tells player to stack right.
+    function spawnBiasWarning(dir) {
+      const el = document.createElement('div')
+      const side = dir < 0 ? 'right' : 'left' // pop-up sits on the *safe* side
+      el.className = 'bias-warn ' + side
+      const label = dir < 0 ? 'STACK RIGHT!' : 'STACK LEFT!'
+      const arrow = dir < 0 ? '→' : '←'
+      el.innerHTML = dir < 0
+        ? `${label} <span class="arrow">${arrow}</span>`
+        : `<span class="arrow">${arrow}</span> ${label}`
+      document.body.appendChild(el)
+      setTimeout(() => el.remove(), 720)
+    }
 
     function spawnPtsPopup(pts, kind, comboVal) {
       const el = document.createElement('div')
@@ -635,25 +686,75 @@ export default function Game() {
     const logoTex = texLoader.load('/logo.png')
     logoTex.colorSpace = THREE.SRGBColorSpace
 
+    // Bigger, brighter glow — this is the company logo, it should be the most
+    // visually loud thing on screen short of the tower itself.
     const glowTex = (() => {
       const c = document.createElement('canvas')
-      c.width = c.height = 128
+      c.width = c.height = 256
       const cx = c.getContext('2d')
-      const g = cx.createRadialGradient(64, 64, 0, 64, 64, 64)
-      g.addColorStop(0.0, 'rgba(220,140,255,0.95)')
-      g.addColorStop(0.35, 'rgba(170, 60,230,0.55)')
+      const g = cx.createRadialGradient(128, 128, 0, 128, 128, 128)
+      g.addColorStop(0.0, 'rgba(255,200,255,1.0)')
+      g.addColorStop(0.20, 'rgba(230,150,255,0.90)')
+      g.addColorStop(0.50, 'rgba(170, 60,230,0.55)')
       g.addColorStop(1.0, 'rgba(120,  0,180,0.0)')
       cx.fillStyle = g
-      cx.fillRect(0, 0, 128, 128)
+      cx.fillRect(0, 0, 256, 256)
       const t = new THREE.CanvasTexture(c)
       t.colorSpace = THREE.SRGBColorSpace
       return t
     })()
 
-    function spawnProjectile() {
+    // Helper: convert a world-space Y to a screen-space Y (in pixels) using the
+    // current camera. Used for telegraph placement so the arrow always points at
+    // where the projectile will actually appear, regardless of camera height.
+    function worldYToScreenY(worldY) {
+      const v = new THREE.Vector3(0, worldY, 0)
+      v.project(camera)
+      return ((1 - v.y) / 2) * window.innerHeight
+    }
+
+    // Telegraph: drop a pulsing arrow on the screen edge AT the exact world Y the
+    // projectile will spawn at, then actually spawn the projectile after `lead` frames.
+    // Locking absY here (instead of recomputing from state.swingHeight at spawn time)
+    // keeps the warning honest if the swing band moves between warning and spawn.
+    function spawnProjectileWarning() {
+      const dir = Math.random() < 0.5 ? -1 : 1
+      const yOff = (Math.random() - 0.5) * 1.4
+      const absY = state.swingHeight + yOff
+      const el = document.createElement('div')
+      el.className = 'proj-warn ' + (dir < 0 ? 'left' : 'right')
+      // CSS-drawn triangle (border trick) — guaranteed look across platforms,
+      // unlike a unicode arrow glyph that font-fallback can swap out.
+      el.innerHTML = '<div class="tri"></div><div class="incoming">INCOMING</div>'
+      // Project world Y → screen Y so the arrow lines up vertically with the actual shot.
+      const screenY = worldYToScreenY(absY)
+      el.style.top = Math.max(60, Math.min(window.innerHeight - 80, screenY)) + 'px'
+      document.body.appendChild(el)
+      setTimeout(() => el.remove(), 750)
+      state.projectileWarnings.push({
+        dir,
+        absY, // committed world Y — used by spawnProjectile, not recomputed
+        framesLeft: 45, // ~0.75s lead
+      })
+    }
+
+    function spawnProjectile(dir, absY) {
       const group = new THREE.Group()
 
-      // Purple radial glow behind the logo (additive).
+      // Outer halo — extra glow ring so the logo really pops, even at fast speeds.
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: glowTex,
+        color: 0xff66ff,
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }))
+      halo.scale.set(6.5, 6.5, 1)
+      halo.position.z = -0.1
+      group.add(halo)
+
+      // Inner glow.
       const glow = new THREE.Sprite(new THREE.SpriteMaterial({
         map: glowTex,
         color: 0xcc66ff,
@@ -661,48 +762,76 @@ export default function Game() {
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       }))
-      glow.scale.set(3.4, 3.4, 1)
+      glow.scale.set(4.5, 4.5, 1)
       glow.position.z = -0.05
       group.add(glow)
 
-      // The logo itself.
+      // The logo itself — bumped up so the brand reads at a glance.
       const logo = new THREE.Sprite(new THREE.SpriteMaterial({
         map: logoTex,
         transparent: true,
         depthWrite: false,
       }))
-      logo.scale.set(1.5, 1.5, 1)
+      logo.scale.set(2.4, 2.4, 1)
       group.add(logo)
 
-      const dir = Math.random() < 0.5 ? -1 : 1
-      // Spawn off the side of the screen at the swing band height.
-      group.position.set(
-        dir * -22,
-        state.swingHeight + (Math.random() - 0.5) * 1.4,
-        0
-      )
+      // Spawn off the side of the screen at the committed Y from the warning.
+      group.position.set(dir * -22, absY, 0)
       scene.add(group)
 
       state.projectiles.push({
         mesh: group,
         glow,
+        halo,
+        logo,
         vx: dir * (0.18 + Math.random() * 0.07),
         vy: 0,
         wobblePhase: Math.random() * Math.PI * 2,
-        life: 600,
-        radius: 0.7,
+        life: 280, // tight safety net; actual cleanup happens on |x| > 28
+        radius: 0.95, // slightly larger to match the bigger sprite
+        trail: [], // logo ghost copies, fade out behind the main sprite
       })
     }
 
+    // Rotation-aware hit test. The swinging piece visibly rotates ±0.22 rad from the
+    // swing and another ±0.25 rad from prior projectile hits, so an axis-aligned AABB
+    // misses real visual hits. Transform the projectile into the piece's local frame
+    // and do the AABB check there.
     function projectileHitsPiece(pj, piece) {
-      const px = piece.position.x
-      const py = piece.position.y
+      const dx = pj.mesh.position.x - piece.position.x
+      const dy = pj.mesh.position.y - piece.position.y
+      const a = -piece.rotation.z
+      const c = Math.cos(a), s = Math.sin(a)
+      const lx = dx * c - dy * s
+      const ly = dx * s + dy * c
       const hw = piece.userData.pw / 2 + pj.radius
       const hh = piece.userData.ph / 2 + pj.radius
-      return (
-        Math.abs(pj.mesh.position.x - px) < hw &&
-        Math.abs(pj.mesh.position.y - py) < hh
+      return Math.abs(lx) < hw && Math.abs(ly) < hh
+    }
+
+    // Expanding purple shockwave ring on impact — distinct from landing particles
+    // so the player instantly reads "I got hit" instead of "I landed."
+    function spawnShockwave(x, y) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.6, 0.85, 32),
+        new THREE.MeshBasicMaterial({
+          color: 0xff44ff,
+          transparent: true,
+          opacity: 0.95,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        })
       )
+      ring.position.set(x, y, 0)
+      scene.add(ring)
+      state.shockwaves.push({ mesh: ring, life: 1 })
+    }
+
+    function disposeProjectile(pj) {
+      scene.remove(pj.mesh)
+      for (const t of pj.trail) scene.remove(t.sprite)
+      pj.trail.length = 0
     }
 
     function onProjectileHit(pj) {
@@ -714,8 +843,9 @@ export default function Game() {
         state.currentPiece.rotation.z += dir * 0.25
         state.currentPiece.rotation.x = (Math.random() - 0.5) * 0.4
       }
-      state.screenShake = Math.max(state.screenShake, 0.45)
-      spawnBurst(pj.mesh.position.x, pj.mesh.position.y, 0, 16, [0xcc66ff, 0xff88ff, 0xffffff, 0x9966ff])
+      state.screenShake = Math.max(state.screenShake, 0.55)
+      spawnShockwave(pj.mesh.position.x, pj.mesh.position.y)
+      spawnBurst(pj.mesh.position.x, pj.mesh.position.y, 0, 22, [0xcc66ff, 0xff88ff, 0xffffff, 0x9966ff, 0xff44ff])
     }
 
     // Combo glow — tint every stacked piece's emissive by current combo level.
@@ -809,10 +939,11 @@ export default function Game() {
       const perf = overhang < 0.08
       const good = overhang < 0.30
       let pts = Math.max(5, Math.round((1 - Math.min(overhang, 1)) * 130) + 10)
-      if (perf) { pts += 70; state.combo++ }
+      if (perf) { pts += 70; state.combo++; state.perfectCount++ }
       else if (good) { pts += 20; state.combo = Math.max(0, state.combo - 1) }
       else { state.combo = 0; pts = Math.max(5, pts - 20) }
       if (state.combo >= 2) pts = Math.round(pts * (1 + state.combo * 0.4))
+      if (state.combo > state.maxCombo) state.maxCombo = state.combo
       state.score += pts
 
       const sc = scoreRef.current
@@ -864,7 +995,29 @@ export default function Game() {
       state.towerHeight += ph
       state.stackedPieces.push(p)
       towerGroup.add(p)
+      // Windowed directional bias — track only recent landings against the absolute
+      // tower centerline (x = 0). Average of this window drives the warning + topple
+      // pressure in the animate loop. Using a window (not a cumulative sum) means a
+      // handful of corrective left stacks actually pulls the drift back below the
+      // warning threshold — otherwise old rightward history would lock you out of recovery.
+      state.recentDrifts.push(lx)
+      const DRIFT_WINDOW = 10
+      if (state.recentDrifts.length > DRIFT_WINDOW) state.recentDrifts.shift()
       updateTowerGlow()
+
+      // Squash-on-land — kick scale to flat-and-wide, animate loop lerps it back.
+      p.scale.set(1.18, 0.72, 1.18)
+      state.lastLandedPiece = p
+      state.lastLandedSquash = 1
+      state.framesSinceLand = 0
+
+      // Tier change detection — pop the milestone banner once per crossing.
+      const newTier = Math.floor(state.stackedPieces.length / 25)
+      if (newTier > state.tier) {
+        state.tier = newTier
+        state.tierReached = newTier
+        spawnTierBanner(newTier)
+      }
 
       // Smooth per-floor swing scaling — faster ramp than before.
       const f = state.stackedPieces.length
@@ -891,13 +1044,25 @@ export default function Game() {
       state.stackedPieces = []
       for (const fp of state.fallingPieces) scene.remove(fp.mesh)
       state.fallingPieces = []
-      for (const pj of state.projectiles) scene.remove(pj.mesh)
+      for (const pj of state.projectiles) disposeProjectile(pj)
       state.projectiles = []
-      state.projectileTimer = 360 + Math.random() * 240 // grace period at start
+      for (const sw of state.shockwaves) scene.remove(sw.mesh)
+      state.shockwaves = []
+      state.projectileTimer = 480 + Math.random() * 360 // generous grace period at start
       state.towerHeight = 0
       state.towerLeanX = 0
       state.towerVelocity = 0
       state.towerAngle = 0
+      state.recentDrifts = []
+      state.biasWarnCooldown = 0
+      state.tier = 0
+      state.perfectCount = 0
+      state.maxCombo = 0
+      state.tierReached = 0
+      state.framesSinceLand = 0
+      state.lastLandedPiece = null
+      state.lastLandedSquash = 0
+      state.projectileWarnings = []
       towerGroup.rotation.z = 0
       state.score = 0
       state.combo = 0
@@ -972,6 +1137,43 @@ export default function Game() {
           craneCable.scale.y = cableLen
           craneCable.position.set(sx, pieceTopY + cableLen / 2, 0)
         }
+        // Trail wisp — small fading particle behind the swinging piece, opposite swing dir.
+        if (state.frameN % 4 === 0) {
+          const swingDir = Math.cos(state.swingAngle)
+          spawnBurst(
+            sx - swingDir * 0.6,
+            state.swingHeight - state.currentPiece.userData.ph * 0.35,
+            0,
+            1,
+            [0xcc88ff, 0xff88ff, 0xffe94d]
+          )
+        }
+      }
+
+      // Squash-on-land — ease the most recently landed piece back to identity scale.
+      if (state.lastLandedPiece && state.lastLandedSquash > 0) {
+        state.lastLandedSquash *= 0.82
+        if (state.lastLandedSquash < 0.01) {
+          state.lastLandedPiece.scale.set(1, 1, 1)
+          state.lastLandedSquash = 0
+          state.lastLandedPiece = null
+        } else {
+          const t = state.lastLandedSquash
+          state.lastLandedPiece.scale.set(
+            1 + 0.18 * t,
+            1 - 0.28 * t,
+            1 + 0.18 * t,
+          )
+        }
+      }
+
+      // Combo decay — stalling kills the combo so the player has to keep moving.
+      if (state.gameActive && state.combo > 0) {
+        state.framesSinceLand++
+        if (state.framesSinceLand > 240) { // ~4s without a successful land
+          state.combo = 0
+          if (comboTextRef.current) comboTextRef.current.style.opacity = '0'
+        }
       }
 
       // Drop
@@ -1004,6 +1206,61 @@ export default function Game() {
         state.towerVelocity += state.towerLeanX * (0.008 + tier * 0.003) * hFactor
         state.towerVelocity -= state.towerAngle * (0.0035 - Math.min(0.0025, tier * 0.0008)) // strong restoring at low tiers, weakens with height
         state.towerVelocity *= 0.965
+        // Windowed cumulative-bias pressure with smooth height scaling.
+        //   At low towers, balance barely matters (huge tolerance, weak push) so early
+        //   pieces feel forgiving and arcade-y.
+        //   At tall towers, balance dominates: tolerance shrinks fast, the topple force
+        //   ramps up, and the warning band feels physically tense.
+        // Two thresholds:
+        //   warnBiasThresh — earlier line; pop the "STACK X!" warning so the player has
+        //                    time to recover BEFORE the tower starts toppling.
+        //   toppleBiasThresh — the actual line where bias starts pushing the tower over.
+        // avgDrift is over the recent-drift window, so a few left stacks recover.
+        const drifts = state.recentDrifts
+        const avgDrift = drifts.length
+          ? drifts.reduce((s, v) => s + v, 0) / drifts.length
+          : 0
+        const flrs = state.stackedPieces.length || 1
+        // Smooth 0 → 1 ramp over the first ~70 floors. Continues to influence beyond
+        // through the additive tier tightening below.
+        const heightT = Math.min(1, flrs / 70)
+        // Tolerance: starts at ~2.6 (very forgiving) and tightens toward 0.35 by floor 70.
+        // Tier adds an extra bite past every 25-floor milestone so high-tier play feels brutal.
+        const toppleBiasThresh = Math.max(0.25, 2.6 - heightT * 2.25 - tier * 0.08)
+        const warnBiasThresh = toppleBiasThresh * 0.55
+        const absDrift = Math.abs(avgDrift)
+        const dir = Math.sign(avgDrift) || 1
+
+        // Early-warning pop-ups + needle color flip — fires well before topple pressure.
+        if (absDrift > warnBiasThresh) {
+          state.biasWarnCooldown -= 1
+          if (state.biasWarnCooldown <= 0) {
+            spawnBiasWarning(dir)
+            // Cadence speeds up as we approach the topple line — calm at first, frantic near it.
+            const urgency = Math.min(1,
+              (absDrift - warnBiasThresh) / Math.max(0.01, toppleBiasThresh - warnBiasThresh))
+            state.biasWarnCooldown = Math.max(35, 95 - urgency * 60)
+          }
+          // Light shake while in the warning band — also scales with height so altitude bites.
+          state.screenShake = Math.max(
+            state.screenShake,
+            (0.08 + heightT * 0.18) + (absDrift - warnBiasThresh) * 0.4,
+          )
+        } else {
+          state.biasWarnCooldown = 0
+        }
+
+        // Actual topple pressure — only above the topple threshold. Force ramps with
+        // height: low towers get a gentle nudge, tall towers get hammered.
+        const excess = absDrift - toppleBiasThresh
+        if (excess > 0) {
+          const heightForce = 0.4 + heightT * 1.6 // 0.4× at floor 0, 2.0× at floor 70+
+          state.towerVelocity += dir * excess * (0.014 + tier * 0.007) * hFactor * heightForce
+          state.screenShake = Math.max(
+            state.screenShake,
+            Math.min(0.85, excess * 0.5 + tier * 0.05 + heightT * 0.2),
+          )
+        }
         state.towerAngle += state.towerVelocity
       }
       towerGroup.rotation.z = state.towerAngle * (Math.PI / 180)
@@ -1011,41 +1268,116 @@ export default function Game() {
       const toppleThresh = Math.max(14, 32 - tier * 5)
       if (state.gameActive && Math.abs(state.towerAngle) > toppleThresh) triggerGameOver()
 
-      // Balance needle
-      const leanNorm = Math.max(0, Math.min(1, 0.5 + state.towerLeanX / 10))
-      if (balanceNeedleRef.current) balanceNeedleRef.current.style.left = (leanNorm * 100) + '%'
-
-      // Projectile spawn timer — only while the round is active.
-      if (state.gameActive) {
-        state.projectileTimer -= 1
-        if (state.projectileTimer <= 0) {
-          spawnProjectile()
-          // Cooldown shortens as the tower grows.
-          const tier = Math.floor(state.stackedPieces.length / 25)
-          state.projectileTimer = Math.max(60, 240 - tier * 30) + Math.random() * 120
+      // Balance needle — combines instantaneous lean with the windowed-bias average so
+      // the meter reflects both failure modes. Color-flips at the WARNING threshold,
+      // not the topple threshold, so the player gets visual lead time too.
+      {
+        const drifts = state.recentDrifts
+        const avgDrift = drifts.length
+          ? drifts.reduce((s, v) => s + v, 0) / drifts.length
+          : 0
+        const leanContrib = state.towerLeanX / 10
+        const biasContrib = avgDrift / 3
+        const leanNorm = Math.max(0, Math.min(1, 0.5 + leanContrib + biasContrib))
+        if (balanceNeedleRef.current) {
+          balanceNeedleRef.current.style.left = (leanNorm * 100) + '%'
+          const flrs = state.stackedPieces.length || 1
+          const heightT = Math.min(1, flrs / 70)
+          const toppleBiasThresh = Math.max(0.25, 2.6 - heightT * 2.25 - tier * 0.08)
+          const warnBiasThresh = toppleBiasThresh * 0.55
+          balanceNeedleRef.current.classList.toggle(
+            'bias-warn-needle',
+            Math.abs(avgDrift) > warnBiasThresh,
+          )
         }
       }
 
-      // Update projectiles — drift across, sine wobble, hit-test the swinging piece.
+      // Projectile telegraph + spawn — schedule a warning, fire the projectile when its lead expires.
+      // Cooldown is rare + heavily randomized: long gaps with occasional bursts, never spam.
+      if (state.gameActive) {
+        state.projectileTimer -= 1
+        if (state.projectileTimer <= 0) {
+          spawnProjectileWarning()
+          const t = Math.floor(state.stackedPieces.length / 25)
+          // Floor 0:    320 + random*360 = 5.3–11.3s between shots
+          // Tier 4+:    220 + random*360 = 3.7–9.7s
+          // Tier 8+:    180 + random*360 = 3.0–9.0s (capped — never faster than this)
+          state.projectileTimer = Math.max(180, 320 - t * 25) + Math.random() * 360
+        }
+        for (let i = state.projectileWarnings.length - 1; i >= 0; i--) {
+          const w = state.projectileWarnings[i]
+          w.framesLeft--
+          if (w.framesLeft <= 0) {
+            spawnProjectile(w.dir, w.absY)
+            state.projectileWarnings.splice(i, 1)
+          }
+        }
+      }
+
+      // Update projectiles — drift across, sine wobble, trail ghosts, hit-test the swinging piece.
       for (let i = state.projectiles.length - 1; i >= 0; i--) {
         const pj = state.projectiles[i]
         pj.mesh.position.x += pj.vx
         pj.mesh.position.y += pj.vy + Math.sin((state.frameN + pj.wobblePhase * 60) * 0.06) * 0.025
-        // Slight pulsing glow.
-        const pulse = 3.4 + Math.sin(state.frameN * 0.1 + pj.wobblePhase) * 0.25
-        pj.glow.scale.set(pulse, pulse, 1)
-        pj.life--
 
+        // Pulsing glow + halo — extra visibility for the company logo.
+        const pulse = 4.5 + Math.sin(state.frameN * 0.1 + pj.wobblePhase) * 0.35
+        pj.glow.scale.set(pulse, pulse, 1)
+        if (pj.halo) {
+          const haloPulse = 6.5 + Math.sin(state.frameN * 0.07 + pj.wobblePhase) * 0.55
+          pj.halo.scale.set(haloPulse, haloPulse, 1)
+        }
+
+        // Trail — drop a fading logo ghost every 3 frames behind the projectile.
+        if (state.frameN % 3 === 0) {
+          const ghost = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: logoTex,
+            transparent: true,
+            opacity: 0.55,
+            depthWrite: false,
+          }))
+          ghost.scale.set(2.0, 2.0, 1)
+          ghost.position.copy(pj.mesh.position)
+          ghost.position.z = -0.02
+          scene.add(ghost)
+          pj.trail.push({ sprite: ghost, opacity: 0.55 })
+        }
+        // Fade & shrink existing trail ghosts.
+        for (let j = pj.trail.length - 1; j >= 0; j--) {
+          const tr = pj.trail[j]
+          tr.opacity -= 0.07
+          if (tr.opacity <= 0) {
+            scene.remove(tr.sprite)
+            pj.trail.splice(j, 1)
+          } else {
+            tr.sprite.material.opacity = tr.opacity
+            tr.sprite.scale.multiplyScalar(0.96)
+          }
+        }
+
+        pj.life--
         if (pj.life <= 0 || Math.abs(pj.mesh.position.x) > 28) {
-          scene.remove(pj.mesh)
+          disposeProjectile(pj)
           state.projectiles.splice(i, 1)
           continue
         }
 
         if (state.gameActive && state.currentPiece && projectileHitsPiece(pj, state.currentPiece)) {
           onProjectileHit(pj)
-          scene.remove(pj.mesh)
+          disposeProjectile(pj)
           state.projectiles.splice(i, 1)
+        }
+      }
+
+      // Shockwave rings — expand and fade after projectile impacts.
+      for (let i = state.shockwaves.length - 1; i >= 0; i--) {
+        const sw = state.shockwaves[i]
+        sw.life -= 0.04
+        sw.mesh.scale.multiplyScalar(1.18)
+        sw.mesh.material.opacity = Math.max(0, sw.life * 0.95)
+        if (sw.life <= 0) {
+          scene.remove(sw.mesh)
+          state.shockwaves.splice(i, 1)
         }
       }
 
@@ -1134,6 +1466,10 @@ export default function Game() {
         state.gameOverDelay--
         if (state.gameOverDelay === 0) {
           if (finalScoreRef.current) finalScoreRef.current.textContent = state.score
+          if (finalHeightRef.current) finalHeightRef.current.textContent = state.stackedPieces.length
+          if (finalPerfectRef.current) finalPerfectRef.current.textContent = state.perfectCount
+          if (finalComboRef.current) finalComboRef.current.textContent = state.maxCombo + '×'
+          if (finalTierRef.current) finalTierRef.current.textContent = state.tierReached
           setShowGameOver(true)
         }
       }
@@ -1197,7 +1533,25 @@ export default function Game() {
         <div className="screen" id="gameover-screen">
           <div className="screen-title">Tower<br /><span className="yl">Toppled!</span></div>
           <div id="final-score-num" ref={finalScoreRef}>0</div>
-          <div className="screen-sub">Height Reached</div>
+          <div className="screen-sub">Final Score</div>
+          <div className="recap">
+            <div className="stat">
+              <div className="stat-num" ref={finalHeightRef}>0</div>
+              <div className="stat-lbl">Height</div>
+            </div>
+            <div className="stat">
+              <div className="stat-num gold" ref={finalPerfectRef}>0</div>
+              <div className="stat-lbl">★ Perfects</div>
+            </div>
+            <div className="stat">
+              <div className="stat-num pink" ref={finalComboRef}>0×</div>
+              <div className="stat-lbl">Best Combo</div>
+            </div>
+            <div className="stat">
+              <div className="stat-num cyan" ref={finalTierRef}>0</div>
+              <div className="stat-lbl">Tier Reached</div>
+            </div>
+          </div>
           <button className="big-btn" onClick={handleStart}>Try Again</button>
         </div>
       )}

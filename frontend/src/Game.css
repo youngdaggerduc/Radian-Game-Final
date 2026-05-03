@@ -244,6 +244,154 @@
   box-shadow: 0 0 70px #ff00ffbb, 0 7px 0 #440088;
 }
 .rts-root .big-btn:active { transform: scale(0.96); }
+/* Tier-up banner — flies across the middle of the screen on every 25-floor milestone */
+.tier-banner {
+  position: fixed;
+  top: 30%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 92px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  text-transform: uppercase;
+  color: #fff;
+  pointer-events: none;
+  z-index: 45;
+  white-space: nowrap;
+  font-family: 'Segoe UI', sans-serif;
+  text-shadow:
+    0 0 40px #ffe94d,
+    0 0 18px #ff7700,
+    0 6px 0 #aa3300;
+  animation: tierSweep 1.5s ease-out forwards;
+}
+.tier-banner .sub {
+  display: block;
+  font-size: 22px;
+  letter-spacing: 4px;
+  color: #ffe94d;
+  margin-top: 6px;
+  text-shadow: 0 0 14px #ff7700;
+}
+@keyframes tierSweep {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.4) rotate(-8deg); }
+  18%  { opacity: 1; transform: translate(-50%, -50%) scale(1.25) rotate(2deg); }
+  35%  { opacity: 1; transform: translate(-50%, -50%) scale(1.05) rotate(-1deg); }
+  75%  { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(0deg); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(0.95) rotate(0deg); }
+}
+
+/* Projectile telegraph marker — pulsing CSS-drawn triangle + label at screen edge */
+.proj-warn {
+  position: fixed;
+  pointer-events: none;
+  z-index: 35;
+  font-family: 'Segoe UI', sans-serif;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transform: translateY(-50%);
+  animation: projWarn 0.75s ease-out forwards;
+  filter: drop-shadow(0 0 18px #ff00ff) drop-shadow(0 0 6px #ffffff);
+}
+.proj-warn.left  { left:  14px; flex-direction: row; }
+.proj-warn.right { right: 14px; flex-direction: row-reverse; }
+
+.proj-warn .tri {
+  width: 0;
+  height: 0;
+  border-top: 30px solid transparent;
+  border-bottom: 30px solid transparent;
+}
+.proj-warn.left  .tri { border-left:  56px solid #ff44ff; }
+.proj-warn.right .tri { border-right: 56px solid #ff44ff; }
+
+.proj-warn .incoming {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #ffffff;
+  text-shadow: 0 0 12px #ff00ff, 0 2px 0 #660099;
+}
+
+@keyframes projWarn {
+  0%   { opacity: 0; transform: translate(0, -50%) scale(0.6); }
+  20%  { opacity: 1; transform: translate(0, -50%) scale(1.15); }
+  60%  { opacity: 0.95; transform: translate(0, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(0, -50%) scale(1.25); }
+}
+
+/* Game-over recap stat grid */
+.rts-root #gameover-screen .recap {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 10px 36px;
+  margin: 22px 0 8px;
+  font-family: 'Segoe UI', sans-serif;
+}
+.rts-root .recap .stat {
+  text-align: center;
+}
+.rts-root .recap .stat-num {
+  font-size: 36px;
+  font-weight: 900;
+  color: #44ffcc;
+  text-shadow: 0 0 16px #00ffaa;
+  line-height: 1;
+}
+.rts-root .recap .stat-num.gold { color: #ffe94d; text-shadow: 0 0 18px #ffaa00; }
+.rts-root .recap .stat-num.pink { color: #ff44ff; text-shadow: 0 0 18px #ff00ff; }
+.rts-root .recap .stat-num.cyan { color: #00d4ff; text-shadow: 0 0 18px #00aaff; }
+.rts-root .recap .stat-lbl {
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #aa88dd;
+  margin-top: 4px;
+}
+
+/* Balance needle — give the bias half a distinct color */
+.rts-root #balance-needle.bias-warn-needle {
+  background: #ff44ff;
+  box-shadow: 0 0 14px #ff00ff;
+}
+
+/* Bias warning — arcade pop-up telling the player to stack the other way */
+.bias-warn {
+  position: fixed;
+  top: 38%;
+  font-size: 56px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: #fff;
+  pointer-events: none;
+  z-index: 40;
+  white-space: nowrap;
+  font-family: 'Segoe UI', sans-serif;
+  text-shadow:
+    0 0 24px #ff44ff,
+    0 0 12px #ffffff,
+    0 4px 0 #660099;
+  animation: biasPulse 0.7s ease-out forwards;
+}
+.bias-warn.left  { left:  6%; transform-origin: left center; }
+.bias-warn.right { right: 6%; transform-origin: right center; }
+.bias-warn .arrow {
+  display: inline-block;
+  font-size: 64px;
+  margin: 0 8px;
+  color: #ffe94d;
+  text-shadow: 0 0 20px #ffaa00;
+}
+@keyframes biasPulse {
+  0%   { opacity: 0; transform: scale(0.6); }
+  20%  { opacity: 1; transform: scale(1.18); }
+  60%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.95) translateY(-10px); }
+}
+
 .rts-root #final-score-num {
   font-size: 88px;
   font-weight: 900;
