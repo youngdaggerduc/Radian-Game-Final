@@ -399,3 +399,216 @@
   text-shadow: 0 0 50px #ffaa00;
   margin-top: 10px;
 }
+
+/* Persistent corner brand mark — over-shoulder photos always include the logo */
+.rts-root #brand-mark {
+  position: fixed;
+  bottom: 18px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1.5px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 0 24px rgba(204, 68, 255, 0.25);
+  pointer-events: none;
+  z-index: 20;
+}
+.rts-root #brand-mark img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 6px #cc44ff);
+}
+.rts-root #brand-mark .brand-text { line-height: 1; text-align: left; }
+.rts-root #brand-mark .brand-name {
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  color: #fff;
+  text-shadow: 0 0 10px #cc44ff;
+}
+.rts-root #brand-mark .brand-sub {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: #ffe94d;
+  text-transform: uppercase;
+  margin-top: 3px;
+}
+
+/* Title + game-over branding block */
+.rts-root .brand-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 18px;
+}
+.rts-root .brand-block.small { margin-bottom: 6px; }
+.rts-root .brand-logo {
+  width: 110px;
+  height: 110px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 30px #cc44ff) drop-shadow(0 0 12px #ff00ff);
+  animation: brandPulse 2.4s ease-in-out infinite;
+}
+.rts-root .brand-block.small .brand-logo {
+  width: 64px;
+  height: 64px;
+}
+@keyframes brandPulse {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 30px #cc44ff) drop-shadow(0 0 12px #ff00ff); }
+  50%      { transform: scale(1.05); filter: drop-shadow(0 0 42px #ee66ff) drop-shadow(0 0 18px #ff44ff); }
+}
+.rts-root .brand-wordmark {
+  font-size: 42px;
+  font-weight: 900;
+  letter-spacing: 14px;
+  color: #fff;
+  text-shadow: 0 0 24px #cc44ff, 0 4px 0 #660099;
+  margin-top: 10px;
+  margin-left: 14px; /* offset the visual weight of letter-spacing */
+}
+.rts-root .brand-block.small .brand-wordmark {
+  font-size: 22px;
+  letter-spacing: 8px;
+  margin-top: 6px;
+  margin-left: 8px;
+}
+.rts-root .brand-tagline {
+  font-size: 13px;
+  letter-spacing: 4px;
+  color: #ffe94d;
+  text-transform: uppercase;
+  margin-top: 6px;
+  text-shadow: 0 0 10px #ffaa00;
+}
+.rts-root .brand-footer {
+  margin-top: 28px;
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: #aa88dd;
+  text-transform: uppercase;
+  text-align: center;
+}
+.rts-root .brand-footer .cta {
+  color: #ffe94d;
+  font-weight: 900;
+  letter-spacing: 4px;
+  text-shadow: 0 0 10px #ffaa00;
+}
+
+/* Tighten the in-game title now that the corner mark carries the brand */
+.rts-root .game-title {
+  font-size: 13px;
+  letter-spacing: 5px;
+  opacity: 0.55;
+}
+
+/* Difficulty-coded border on the next-piece preview */
+.rts-root #next-canvas.diff-easy { border-color: #44ff77; box-shadow: 0 0 14px #00aa55; }
+.rts-root #next-canvas.diff-med  { border-color: #ffe94d; box-shadow: 0 0 14px #aa6600; }
+.rts-root #next-canvas.diff-hard { border-color: #ff4488; box-shadow: 0 0 14px #aa0033; }
+
+/* Foundation picker on the start screen */
+.rts-root .foundation-picker {
+  margin-top: 24px;
+  text-align: center;
+}
+.rts-root .foundation-label {
+  font-size: 12px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: #aa88dd;
+  margin-bottom: 12px;
+}
+.rts-root .foundation-row {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.rts-root .foundation-btn {
+  background: rgba(0, 0, 0, 0.32);
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-radius: 14px;
+  padding: 14px 20px;
+  cursor: pointer;
+  color: #fff;
+  font-family: inherit;
+  min-width: 160px;
+  transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s, background 0.12s;
+}
+.rts-root .foundation-btn:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.rts-root .foundation-btn.selected {
+  border-color: #ffe94d;
+  background: rgba(204, 68, 255, 0.22);
+  box-shadow: 0 0 24px #cc44ffaa;
+}
+.rts-root .foundation-name {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 3px;
+}
+.rts-root .foundation-sub {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #ffe94d;
+  margin-top: 6px;
+  text-transform: uppercase;
+}
+
+/* Game-over actions row + secondary button */
+.rts-root .gameover-actions {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 28px;
+}
+.rts-root .gameover-actions .big-btn { margin-top: 0; }
+.rts-root .big-btn.secondary {
+  background: linear-gradient(135deg, #00d4ff, #0066cc);
+  box-shadow: 0 0 50px #00aaff88, 0 5px 0 #003366;
+  padding: 16px 36px;
+  font-size: 18px;
+}
+.rts-root .big-btn.secondary:hover {
+  box-shadow: 0 0 70px #00aaffbb, 0 7px 0 #003366;
+}
+
+/* Milestone + checkpoint banner variants — share .tier-banner sweep animation */
+.tier-banner.milestone {
+  color: #00d4ff;
+  text-shadow: 0 0 40px #00ffff, 0 0 18px #44aaff, 0 6px 0 #003366;
+  font-size: 76px;
+  letter-spacing: 4px;
+}
+.tier-banner.milestone .sub { color: #00d4ff; text-shadow: 0 0 14px #00aaff; }
+.tier-banner.checkpoint {
+  color: #44ff77;
+  text-shadow: 0 0 40px #44ff77, 0 0 18px #00aa55, 0 6px 0 #006633;
+  font-size: 60px;
+  letter-spacing: 4px;
+}
+.tier-banner.checkpoint .sub { color: #ffe94d; text-shadow: 0 0 14px #ffaa00; }
+
+/* Wind warning — re-uses .bias-warn but tinted cyan/yellow */
+.bias-warn.wind {
+  color: #ffe94d;
+  text-shadow:
+    0 0 24px #00d4ff,
+    0 0 12px #ffffff,
+    0 4px 0 #006699;
+  top: 24%;
+  font-size: 48px;
+}
+.bias-warn.wind .arrow {
+  color: #00d4ff;
+  text-shadow: 0 0 18px #00ffff;
+}

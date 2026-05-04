@@ -23,6 +23,32 @@ const COLORS = [
   0xff6600, 0x66ff33, 0x3388ff, 0xff0088,
 ]
 
+// Per-piece difficulty bucket — drives the colored border on the next-piece preview
+// so players can read what's coming at a glance.
+const TYPE_DIFFICULTY = {
+  scaf_flat:       'easy',
+  scaf_house:      'easy',
+  scaf_arch:       'med',
+  scaf_cabin:      'med',
+  scaf_double:     'med',
+  scaf_water_tank: 'med',
+  scaf_ladder:     'hard',
+  scaf_flag:       'hard',
+  scaf_crane_arm:  'hard',
+  scaf_sign:       'hard',
+  scaf_rocket_pad: 'hard',
+}
+
+// Score milestones — celebratory banner fires once per crossing.
+const SCORE_MILESTONES = [2500, 5000, 10000, 25000, 50000, 100000, 250000, 500000]
+
+// Foundation choice — base scale + score multiplier.
+const FOUNDATIONS = {
+  narrow:   { scale: 0.65, mult: 2.0,  label: 'NARROW',   sub: '2× SCORE · BRUTAL' },
+  standard: { scale: 1.0,  mult: 1.0,  label: 'STANDARD', sub: '1× SCORE · BALANCED' },
+  wide:     { scale: 1.35, mult: 0.7,  label: 'WIDE',     sub: '0.7× SCORE · FRIENDLY' },
+}
+
 export default function Game() {
   const canvasRef = useRef(null)
   const nextCanvasRef = useRef(null)
@@ -38,13 +64,14 @@ export default function Game() {
 
   const [showStart, setShowStart] = useState(true)
   const [showGameOver, setShowGameOver] = useState(false)
+  const [foundation, setFoundation] = useState('standard')
 
   // Mutable refs the engine writes into; exposed to React via the start handler
   const engineRef = useRef(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
@@ -321,37 +348,456 @@ export default function Game() {
       return g
     }
 
-    // World — ground disc
+    // ── Branded prop builders (workers, hats, flags, vehicle, etc.) ──
+    function makeHardHat(color = 0xffcc00) {
+      const g = new THREE.Group()
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(0.45, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+        toonMat(color)
+      )
+      outline(dome, 1.07); dome.castShadow = true; g.add(dome)
+      const brim = cyl(0.58, 0.58, 0.06, 16, color); brim.position.y = 0.0; g.add(brim)
+      const band = cyl(0.46, 0.46, 0.08, 16, 0x222233); band.position.y = 0.12; g.add(band)
+      // Tiny RADIAN crest centered on the brim front
+      const crest = box(0.18, 0.10, 0.02, 0xffe94d); crest.position.set(0, 0.18, 0.42); g.add(crest)
+      return g
+    }
+
+    function makeFlag(color) {
+      const g = new THREE.Group()
+      const flagPole = cyl(0.04, 0.04, 1.4, 6, 0xddddee)
+      flagPole.position.y = 0.7; g.add(flagPole)
+      const cloth = box(0.7, 0.45, 0.04, color)
+      cloth.position.set(0.4, 1.15, 0); g.add(cloth)
+      const tip = sphere(0.08, 0xffe94d); tip.position.y = 1.4; g.add(tip)
+      g.userData.cloth = cloth
+      return g
+    }
+
+    function makeFloorNumber(n) {
+      const c = document.createElement('canvas')
+      c.width = 256; c.height = 128
+      const ctx = c.getContext('2d')
+      ctx.clearRect(0, 0, 256, 128)
+      ctx.font = '900 96px "Segoe UI", sans-serif'
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.lineWidth = 10; ctx.strokeStyle = '#1a0a44'
+      ctx.strokeText(String(n), 128, 64)
+      ctx.fillStyle = '#ffe94d'
+      ctx.fillText(String(n), 128, 64)
+      const tex = new THREE.CanvasTexture(c)
+      tex.colorSpace = THREE.SRGBColorSpace
+      const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.4, 0.7),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+      )
+      return plane
+    }
+
+    function makeWorker(shirtColor, x, z, hatColor = 0xffcc00) {
+      const g = new THREE.Group()
+      const legL = box(0.18, 0.7, 0.18, 0x113355); legL.position.set(-0.13, 0.35, 0); g.add(legL)
+      const legR = box(0.18, 0.7, 0.18, 0x113355); legR.position.set( 0.13, 0.35, 0); g.add(legR)
+      const body = box(0.55, 0.7, 0.32, shirtColor); body.position.set(0, 1.05, 0); g.add(body)
+      const armL = box(0.13, 0.6, 0.13, shirtColor); armL.position.set(-0.36, 1.05, 0); g.add(armL)
+      const armR = box(0.13, 0.6, 0.13, shirtColor); armR.position.set( 0.36, 1.05, 0); g.add(armR)
+      // Head pivot — rotates so the worker can look up at the tower
+      const headPivot = new THREE.Group()
+      headPivot.position.set(0, 1.4, 0); g.add(headPivot)
+      const head = box(0.32, 0.32, 0.32, 0xffd6a0); head.position.y = 0.16; headPivot.add(head)
+      const hat = makeHardHat(hatColor); hat.position.y = 0.36; hat.scale.setScalar(0.5); headPivot.add(hat)
+      g.position.set(x, 0, z)
+      g.userData.head = headPivot
+      g.userData.phase = Math.random() * Math.PI * 2
+      return g
+    }
+
+    function makeBrandedTruck() {
+      const g = new THREE.Group()
+      // Cab (front)
+      const cab = box(2.0, 1.5, 1.9, 0xffe94d); cab.position.set(-1.6, 1.05, 0); g.add(cab)
+      // Cargo box (rear) — white so the brand panel reads
+      const cargo = box(3.4, 1.9, 2.0, 0xffffff); cargo.position.set(0.7, 1.25, 0); g.add(cargo)
+      // RADIAN side panels (both sides)
+      const sCanvas = document.createElement('canvas')
+      sCanvas.width = 512; sCanvas.height = 256
+      const sctx = sCanvas.getContext('2d')
+      sctx.fillStyle = '#ffffff'; sctx.fillRect(0, 0, 512, 256)
+      sctx.fillStyle = '#660099'
+      sctx.font = '900 130px "Segoe UI", sans-serif'
+      sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
+      sctx.fillText('RADIAN', 256, 110)
+      sctx.fillStyle = '#1a0a44'
+      sctx.font = '800 50px "Segoe UI", sans-serif'
+      sctx.fillText('SCAFFOLDING CO.', 256, 200)
+      const sTex = new THREE.CanvasTexture(sCanvas)
+      sTex.colorSpace = THREE.SRGBColorSpace
+      const panelMat = new THREE.MeshBasicMaterial({ map: sTex })
+      const panelF = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 1.5), panelMat)
+      panelF.position.set(0.7, 1.25, 1.01); g.add(panelF)
+      const panelB = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 1.5), panelMat)
+      panelB.position.set(0.7, 1.25, -1.01); panelB.rotation.y = Math.PI; g.add(panelB)
+      // Windshield
+      const ws = box(0.5, 0.7, 1.6, 0x44ddff)
+      ws.position.set(-0.7, 1.55, 0); g.add(ws)
+      // Wheels — both sides
+      for (const x of [-1.7, 1.4]) {
+        for (const z of [-0.95, 0.95]) {
+          const wheel = cyl(0.4, 0.4, 0.25, 12, 0x111111)
+          wheel.rotation.x = Math.PI / 2
+          wheel.position.set(x, 0.4, z); g.add(wheel)
+          const hub = cyl(0.18, 0.18, 0.27, 8, 0x666666)
+          hub.rotation.x = Math.PI / 2
+          hub.position.set(x, 0.4, z); g.add(hub)
+        }
+      }
+      return g
+    }
+
+    function makeBlueprintTable() {
+      const g = new THREE.Group()
+      const top = box(1.7, 0.08, 1.05, 0x553311); top.position.y = 0.85; g.add(top)
+      for (const [x, z] of [[-0.75, -0.42], [0.75, -0.42], [-0.75, 0.42], [0.75, 0.42]]) {
+        const leg = cyl(0.06, 0.06, 0.85, 4, 0x442200); leg.position.set(x, 0.42, z); g.add(leg)
+      }
+      // Blueprint sheet on the table top
+      const sheet = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.5, 0.9),
+        new THREE.MeshBasicMaterial({ color: 0x1f4488, side: THREE.DoubleSide })
+      )
+      sheet.rotation.x = -Math.PI / 2
+      sheet.position.set(0, 0.9, 0); g.add(sheet)
+      // White grid lines on the blueprint
+      const lineMat = new THREE.MeshBasicMaterial({ color: 0xeeeeff, transparent: true, opacity: 0.5 })
+      for (let i = -2; i <= 2; i++) {
+        const lh = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.005, 0.015), lineMat)
+        lh.position.set(0, 0.905, i * 0.18); g.add(lh)
+        const lv = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.005, 0.85), lineMat)
+        lv.position.set(i * 0.28, 0.905, 0); g.add(lv)
+      }
+      // Rolled-up plan beside the sheet
+      const roll = cyl(0.09, 0.09, 0.7, 8, 0xeeeedd)
+      roll.rotation.z = Math.PI / 2
+      roll.position.set(0.4, 0.96, 0.3); g.add(roll)
+      // Coffee mug (foreman's, naturally)
+      const mug = cyl(0.10, 0.10, 0.18, 8, 0xffffff)
+      mug.position.set(-0.6, 1.00, 0.3); g.add(mug)
+      return g
+    }
+
+    function makeToolbox() {
+      const g = new THREE.Group()
+      const body = box(0.85, 0.4, 0.45, 0xff3344); body.position.y = 0.22; g.add(body)
+      const lid = box(0.9, 0.08, 0.5, 0xcc1122); lid.position.y = 0.46; g.add(lid)
+      const handle = cyl(0.04, 0.04, 0.55, 4, 0x222222)
+      handle.rotation.z = Math.PI / 2; handle.position.y = 0.58; g.add(handle)
+      const latch = box(0.08, 0.08, 0.04, 0xffe94d); latch.position.set(0, 0.4, 0.24); g.add(latch)
+      return g
+    }
+
+    function makeWheelbarrow() {
+      const g = new THREE.Group()
+      const tray = box(1.2, 0.1, 0.7, 0x2255cc); tray.position.y = 0.55; g.add(tray)
+      const back = box(1.2, 0.4, 0.04, 0x2255cc); back.position.set(0, 0.75, -0.34); g.add(back)
+      const front = box(1.2, 0.25, 0.04, 0x2255cc); front.position.set(0, 0.67, 0.34); g.add(front)
+      const sideL = box(0.04, 0.4, 0.7, 0x2255cc); sideL.position.set(-0.6, 0.75, 0); g.add(sideL)
+      const sideR = box(0.04, 0.4, 0.7, 0x2255cc); sideR.position.set( 0.6, 0.75, 0); g.add(sideR)
+      // Handles extending backward
+      const hL = cyl(0.04, 0.04, 1.4, 5, 0x553311)
+      hL.rotation.x = Math.PI / 2; hL.position.set(-0.45, 0.55, -0.85); g.add(hL)
+      const hR = cyl(0.04, 0.04, 1.4, 5, 0x553311)
+      hR.rotation.x = Math.PI / 2; hR.position.set( 0.45, 0.55, -0.85); g.add(hR)
+      // Wheel
+      const wheel = cyl(0.32, 0.32, 0.16, 12, 0x111111)
+      wheel.rotation.x = Math.PI / 2; wheel.position.set(0, 0.32, 0.45); g.add(wheel)
+      // Legs at the back
+      const legL = box(0.08, 0.5, 0.08, 0x553311); legL.position.set(-0.5, 0.25, -0.55); g.add(legL)
+      const legR = box(0.08, 0.5, 0.08, 0x553311); legR.position.set( 0.5, 0.25, -0.55); g.add(legR)
+      // A pile of "rubble" inside
+      for (let i = 0; i < 5; i++) {
+        const r = box(0.18 + Math.random() * 0.12, 0.14, 0.18, 0x886633)
+        r.position.set((Math.random() - 0.5) * 0.7, 0.7, (Math.random() - 0.5) * 0.4)
+        r.rotation.y = Math.random() * Math.PI; g.add(r)
+      }
+      return g
+    }
+
+    function makeSandbagPile() {
+      const g = new THREE.Group()
+      const positions = [
+        [-0.4, 0.15, 0, 0],
+        [ 0.4, 0.15, 0, 0.1],
+        [ 0.0, 0.15, 0.5, -0.2],
+        [-0.2, 0.45, 0.2, 0.05],
+        [ 0.2, 0.45, 0.2, -0.1],
+        [ 0.0, 0.75, 0.2, 0],
+      ]
+      for (const [x, y, z, ry] of positions) {
+        const bag = box(0.7, 0.28, 0.45, 0xa67442)
+        bag.position.set(x, y, z); bag.rotation.y = ry
+        g.add(bag)
+      }
+      return g
+    }
+
+    // World — Radian construction site
     {
+      // Asphalt pad the tower rises from
       const disc = new THREE.Mesh(
         new THREE.CylinderGeometry(11, 13, 1.4, 40),
-        toonMat(0x2d0d5c)
+        toonMat(0x1a1a22)
       )
       disc.position.y = -0.7
       disc.receiveShadow = true
       outline(disc, 1.015)
       scene.add(disc)
 
-      for (let i = 0; i < 20; i++) {
-        const ang = (i / 20) * Math.PI * 2
-        const tile = new THREE.Mesh(
-          new THREE.BoxGeometry(1.8, 0.05, 1.8),
-          toonMat(i % 2 === 0 ? 0x3d1570 : 0x4a1a88)
-        )
-        tile.position.set(Math.cos(ang) * 7, 0.02, Math.sin(ang) * 7)
-        tile.rotation.y = ang
-        scene.add(tile)
+      // Painted concrete slab directly under the tower
+      const pad = new THREE.Mesh(
+        new THREE.CylinderGeometry(5.2, 5.2, 0.08, 32),
+        toonMat(0x4a4a55)
+      )
+      pad.position.y = 0.02
+      scene.add(pad)
+
+      // Yellow site striping radiating from pad
+      const stripeMat = new THREE.MeshBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.55 })
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.02, 0.35), stripeMat)
+        stripe.position.set(Math.cos(ang) * 6.4, 0.03, Math.sin(ang) * 6.4)
+        stripe.rotation.y = -ang
+        scene.add(stripe)
       }
 
-      const gridMat = new THREE.MeshBasicMaterial({ color: 0x6633aa, transparent: true, opacity: 0.25 })
-      for (let i = -6; i <= 6; i += 1.5) {
-        const lh = new THREE.Mesh(new THREE.BoxGeometry(22, 0.03, 0.03), gridMat)
-        lh.position.set(0, 0.02, i)
-        scene.add(lh)
-        const lv = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 22), gridMat)
-        lv.position.set(i, 0.02, 0)
-        scene.add(lv)
+      // Safety fence ring (chain link posts + cross rail)
+      const fenceR = 9.2
+      const postCount = 18
+      for (let i = 0; i < postCount; i++) {
+        const ang = (i / postCount) * Math.PI * 2
+        const post = cyl(0.08, 0.08, 1.5, 5, 0xff6600)
+        post.position.set(Math.cos(ang) * fenceR, 0.75, Math.sin(ang) * fenceR)
+        scene.add(post)
       }
+      // Top + bottom rails approximated as a thin torus
+      for (const yPos of [0.25, 1.35]) {
+        const rail = new THREE.Mesh(
+          new THREE.TorusGeometry(fenceR, 0.05, 4, 40),
+          toonMat(0xff7711)
+        )
+        rail.rotation.x = Math.PI / 2
+        rail.position.y = yPos
+        scene.add(rail)
+      }
+
+      // Traffic cones around the slab
+      const conePositions = [
+        [3.8, 0, 2.4], [-3.8, 0, 2.4], [3.8, 0, -2.4], [-3.8, 0, -2.4],
+        [0, 0, 4.6], [0, 0, -4.6],
+      ]
+      for (const [x, , z] of conePositions) {
+        const cBase = box(0.7, 0.08, 0.7, 0x222222)
+        cBase.position.set(x, 0.08, z)
+        scene.add(cBase)
+        const cBody = cone(0.32, 1.0, 8, 0xff5500)
+        cBody.position.set(x, 0.6, z)
+        scene.add(cBody)
+        const stripe = cyl(0.27, 0.30, 0.14, 8, 0xffffff)
+        stripe.position.set(x, 0.55, z)
+        scene.add(stripe)
+      }
+
+      // Wooden pallet
+      {
+        const palletGroup = new THREE.Group()
+        for (let i = 0; i < 4; i++) {
+          const plank = box(2.0, 0.08, 0.32, 0xa67442)
+          plank.position.set(0, 0.18, -0.6 + i * 0.4)
+          palletGroup.add(plank)
+        }
+        for (const x of [-0.8, 0, 0.8]) {
+          const beam = box(0.3, 0.18, 1.6, 0x8a5a30)
+          beam.position.set(x, 0.09, 0)
+          palletGroup.add(beam)
+        }
+        // Stack of bricks/material on the pallet
+        for (let r = 0; r < 2; r++) {
+          for (let c = 0; c < 3; c++) {
+            const brick = box(0.55, 0.25, 0.4, 0xcc4422)
+            brick.position.set(-0.7 + c * 0.6, 0.4 + r * 0.28, 0)
+            palletGroup.add(brick)
+          }
+        }
+        palletGroup.position.set(-7, 0, 4.5)
+        palletGroup.rotation.y = -0.4
+        scene.add(palletGroup)
+      }
+
+      // Dumpster
+      {
+        const dump = new THREE.Group()
+        const body = box(2.4, 1.2, 1.4, 0x228855)
+        body.position.y = 0.65
+        dump.add(body)
+        const lid = box(2.4, 0.1, 1.4, 0x196644)
+        lid.position.y = 1.32
+        lid.rotation.x = -0.15
+        dump.add(lid)
+        const wheel1 = cyl(0.18, 0.18, 0.15, 8, 0x111111)
+        wheel1.rotation.z = Math.PI / 2
+        wheel1.position.set(-1.0, 0.18, 0.5)
+        dump.add(wheel1)
+        const wheel2 = wheel1.clone()
+        wheel2.position.set(1.0, 0.18, 0.5)
+        dump.add(wheel2)
+        dump.position.set(7.2, 0, 4.0)
+        dump.rotation.y = -0.6
+        scene.add(dump)
+      }
+
+      // RADIAN site sign — branded board on two posts
+      {
+        const sign = new THREE.Group()
+        const postL = cyl(0.10, 0.12, 2.4, 6, 0x553311); postL.position.set(-1.6, 1.2, 0); sign.add(postL)
+        const postR = cyl(0.10, 0.12, 2.4, 6, 0x553311); postR.position.set( 1.6, 1.2, 0); sign.add(postR)
+        // Board
+        const board = box(3.6, 1.4, 0.12, 0xffe94d)
+        board.position.y = 2.0
+        sign.add(board)
+        // RADIAN text rendered to a canvas texture
+        const sCanvas = document.createElement('canvas')
+        sCanvas.width = 512; sCanvas.height = 200
+        const sctx = sCanvas.getContext('2d')
+        sctx.fillStyle = '#ffe94d'; sctx.fillRect(0, 0, 512, 200)
+        sctx.fillStyle = '#1a0a44'
+        sctx.font = '900 130px "Segoe UI", sans-serif'
+        sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
+        sctx.fillText('RADIAN', 256, 80)
+        sctx.fillStyle = '#660099'
+        sctx.font = '800 38px "Segoe UI", sans-serif'
+        sctx.fillText('SCAFFOLDING', 256, 158)
+        const sTex = new THREE.CanvasTexture(sCanvas)
+        sTex.colorSpace = THREE.SRGBColorSpace
+        const face = new THREE.Mesh(
+          new THREE.PlaneGeometry(3.4, 1.3),
+          new THREE.MeshBasicMaterial({ map: sTex })
+        )
+        face.position.set(0, 2.0, 0.07)
+        sign.add(face)
+        sign.position.set(0, 0, -8.5)
+        sign.rotation.y = 0.18
+        scene.add(sign)
+      }
+
+      // Branded delivery truck — parked off-site
+      {
+        const truck = makeBrandedTruck()
+        truck.position.set(-9.2, 0, -3.8)
+        truck.rotation.y = 0.55
+        scene.add(truck)
+      }
+
+      // Foreman's blueprint table near the sign
+      {
+        const tbl = makeBlueprintTable()
+        tbl.position.set(-3.2, 0, -7.0)
+        tbl.rotation.y = -0.25
+        scene.add(tbl)
+      }
+
+      // Scattered jobsite props
+      {
+        const tb = makeToolbox(); tb.position.set(7.6, 0, -3.0); tb.rotation.y = -1.0; scene.add(tb)
+        const wb = makeWheelbarrow(); wb.position.set(-7.0, 0, 0.5); wb.rotation.y = -1.4; scene.add(wb)
+        const sb = makeSandbagPile(); sb.position.set(7.0, 0, 1.5); sb.rotation.y = 0.6; scene.add(sb)
+      }
+    }
+
+    // ── Caution tape strung between the safety-fence posts (sways in the animate loop) ──
+    const tapeSegments = []
+    {
+      const fenceR = 9.2
+      const postCount = 18
+      for (let i = 0; i < postCount; i++) {
+        const a1 = (i / postCount) * Math.PI * 2
+        const a2 = ((i + 1) / postCount) * Math.PI * 2
+        const x1 = Math.cos(a1) * fenceR, z1 = Math.sin(a1) * fenceR
+        const x2 = Math.cos(a2) * fenceR, z2 = Math.sin(a2) * fenceR
+        const dx = x2 - x1, dz = z2 - z1
+        const len = Math.sqrt(dx * dx + dz * dz)
+        // Two-tone tape: yellow body with a black diagonal stripe vibe via two segments
+        const tape = box(len * 0.95, 0.14, 0.04, 0xffe94d)
+        tape.position.set((x1 + x2) / 2, 1.7, (z1 + z2) / 2)
+        tape.rotation.y = -Math.atan2(dz, dx)
+        scene.add(tape)
+        tapeSegments.push({ mesh: tape, baseY: 1.7, phase: i * 0.42 })
+      }
+    }
+
+    // ── Spotlight poles — two corners of the site, real lights pointing at the tower ──
+    const siteSpots = []
+    {
+      const positions = [
+        [ 9.5, 9.5],
+        [-9.5, 9.5],
+      ]
+      for (const [px, pz] of positions) {
+        const pl = cyl(0.20, 0.24, 9, 6, 0x444450); pl.position.set(px, 4.5, pz); scene.add(pl)
+        const housing = box(0.85, 0.55, 0.85, 0x222230); housing.position.set(px, 9.0, pz); scene.add(housing)
+        // Lens pointed roughly at the tower base
+        const ang = Math.atan2(-pz, -px)
+        const lens = box(0.65, 0.45, 0.12, 0xffffaa)
+        lens.position.set(px + Math.cos(ang) * 0.45, 9.0, pz + Math.sin(ang) * 0.45)
+        lens.rotation.y = ang
+        scene.add(lens)
+        // Real spotlight (no shadow casting — keeps frame cost down)
+        const spot = new THREE.SpotLight(0xfff0c8, 1.4, 70, Math.PI / 7, 0.45, 1.2)
+        spot.position.set(px, 8.8, pz)
+        spot.target.position.set(0, 6, 0)
+        scene.add(spot); scene.add(spot.target)
+        // Translucent visible cone so the beam reads in the dark scene
+        const cone = new THREE.Mesh(
+          new THREE.ConeGeometry(2.4, 12, 16, 1, true),
+          new THREE.MeshBasicMaterial({ color: 0xffeeaa, transparent: true, opacity: 0.10, side: THREE.DoubleSide, depthWrite: false })
+        )
+        // Cone default points +y; we want it to aim from light toward target
+        cone.position.set(px * 0.5, 4.2, pz * 0.5)
+        cone.lookAt(0, 6, 0)
+        cone.rotateX(Math.PI / 2)
+        scene.add(cone)
+        siteSpots.push({ light: spot, target: spot.target, cone })
+      }
+    }
+
+    // ── Floating dust motes / welding sparks drifting up through the scene ──
+    const sparkCount = 90
+    const sparkVel = new Float32Array(sparkCount)
+    let sparks
+    {
+      const pos = new Float32Array(sparkCount * 3)
+      for (let i = 0; i < sparkCount; i++) {
+        pos[i * 3]     = (Math.random() - 0.5) * 36
+        pos[i * 3 + 1] = Math.random() * 30
+        pos[i * 3 + 2] = (Math.random() - 0.5) * 36 - 4
+        sparkVel[i] = 0.018 + Math.random() * 0.045
+      }
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+      sparks = new THREE.Points(
+        geo,
+        new THREE.PointsMaterial({
+          color: 0xffcc66, size: 0.22, transparent: true, opacity: 0.75, depthWrite: false,
+        })
+      )
+      scene.add(sparks)
+    }
+
+    // ── Worker silhouettes — gradually look up at the growing tower ──
+    const workers = []
+    {
+      const w1 = makeWorker(0xff5544, -6.4, 5.0, 0xffcc00); w1.rotation.y = -0.7; workers.push(w1); scene.add(w1)
+      const w2 = makeWorker(0x3399ff,  6.6, 4.6, 0xff8800); w2.rotation.y =  0.9; workers.push(w2); scene.add(w2)
+      const w3 = makeWorker(0xffe94d, -2.2, -6.2, 0xffffff); w3.rotation.y =  Math.PI; workers.push(w3); scene.add(w3)
     }
 
     // Glow ring
@@ -611,13 +1057,37 @@ export default function Game() {
       framesSinceLand: 0,
       lastLandedPiece: null,
       lastLandedSquash: 0,
+
+      // Foundation choice + derived score multiplier
+      foundation: 'standard',
+      scoreMult: 1.0,
+
+      // Score milestones — index of next milestone to award
+      milestoneIdx: 0,
+
+      // Time-slow on near-miss drops (frames remaining)
+      timeSlow: 0,
+
+      // Wind gusts
+      wind: { active: false, dir: 0, frames: 0, offset: 0, timer: 1200, telegraphFrames: 0 },
+
+      // Power-ups (collected by the swinging piece passing through)
+      powerups: [],
+      powerupTimer: 900,
+      // Active buffs
+      buffWide: false,         // next spawned piece is widened
+      buffFreeze: 0,           // frames swing is frozen
+      buffAutoPerfect: false,  // next drop snaps to perfect X
+
+      // Checkpoint floors (50/100/150) — set true when crossed, consumed in spawnNext
+      checkpointPending: false,
     }
     const towerGroup = new THREE.Group()
     scene.add(towerGroup)
 
     const TIER_NAMES = [
-      'WARMUP', 'STEADY', 'WOBBLER', 'SKYWARD', 'SCAFFOLD MASTER',
-      'CLOUDSCRAPER', 'STRATOSPHERE', 'ASCENDED', 'IMPOSSIBLE', 'RADIANT',
+      'GROUND FLOOR', 'LOW-RISE', 'MID-RISE', 'HIGH-RISE', 'TOWER CREW',
+      'SKYLINE', 'SUPERSTRUCTURE', 'LANDMARK', 'MONUMENT', 'RADIAN LEGEND',
     ]
 
     // Arcade tier-up banner — fires when stackedPieces crosses a 25-floor boundary.
@@ -631,6 +1101,38 @@ export default function Game() {
       // Punchy feedback so the difficulty step lands.
       state.screenShake = Math.max(state.screenShake, 0.6)
       state.flash = Math.max(state.flash, 0.45)
+    }
+
+    // Score milestone banner (cyan) — separate styling from tier banner.
+    function spawnMilestoneBanner(score) {
+      const el = document.createElement('div')
+      el.className = 'tier-banner milestone'
+      el.innerHTML = `${score.toLocaleString()}<span class="sub">RADIANS EARNED</span>`
+      document.body.appendChild(el)
+      setTimeout(() => el.remove(), 1500)
+      state.screenShake = Math.max(state.screenShake, 0.5)
+      state.flash = Math.max(state.flash, 0.35)
+    }
+
+    // Checkpoint banner — when a 50/100/150 floor is crossed and a wide piece is queued.
+    function spawnCheckpointBanner(floor) {
+      const el = document.createElement('div')
+      el.className = 'tier-banner checkpoint'
+      el.innerHTML = `CHECKPOINT — FLOOR ${floor}<span class="sub">BIG PIECE INCOMING</span>`
+      document.body.appendChild(el)
+      setTimeout(() => el.remove(), 1500)
+      state.flash = Math.max(state.flash, 0.4)
+    }
+
+    // Wind warning popup — fires once when a gust starts to blow.
+    function spawnWindWarning(dir) {
+      const el = document.createElement('div')
+      const side = dir > 0 ? 'left' : 'right' // tape on the *origin* side
+      el.className = 'bias-warn wind ' + side
+      const arrow = dir > 0 ? '→ → →' : '← ← ←'
+      el.innerHTML = `<span class="arrow">${arrow}</span> WIND <span class="arrow">${arrow}</span>`
+      document.body.appendChild(el)
+      setTimeout(() => el.remove(), 900)
     }
 
     // Arcade-style "STACK LEFT!" / "STACK RIGHT!" warning when cumulative bias is past
@@ -848,6 +1350,104 @@ export default function Game() {
       spawnBurst(pj.mesh.position.x, pj.mesh.position.y, 0, 22, [0xcc66ff, 0xff88ff, 0xffffff, 0x9966ff, 0xff44ff])
     }
 
+    // ── POWER-UPS ─────────────────────────────────────────
+    // Three pickup types drift across the swing arc; the swinging piece collides with them.
+    //   wide   — next piece spawns 1.5× wider for one drop      (gold)
+    //   freeze — swing pauses for 3 seconds                     (cyan)
+    //   auto   — next drop snaps to perfect X centerline        (magenta)
+    const POWERUP_TYPES = ['wide', 'freeze', 'auto']
+    const POWERUP_COLORS = { wide: 0xffe94d, freeze: 0x00d4ff, auto: 0xff44ff }
+    function makePowerup(type) {
+      const g = new THREE.Group()
+      const col = POWERUP_COLORS[type]
+      // Glowing core sphere
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.55, 14, 10),
+        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.95 })
+      )
+      g.add(core)
+      // Outer halo via additive sprite
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: glowTex, color: col, transparent: true, opacity: 0.85, depthWrite: false,
+      }))
+      halo.scale.set(3.2, 3.2, 1)
+      g.add(halo)
+      // Letter on the core (W / F / A) drawn to a small canvas
+      const c = document.createElement('canvas')
+      c.width = c.height = 128
+      const ctx = c.getContext('2d')
+      ctx.clearRect(0, 0, 128, 128)
+      ctx.font = '900 96px "Segoe UI", sans-serif'
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.lineWidth = 8; ctx.strokeStyle = '#1a0a44'
+      ctx.fillStyle = '#ffffff'
+      const letter = type === 'wide' ? 'W' : type === 'freeze' ? 'F' : 'A'
+      ctx.strokeText(letter, 64, 64); ctx.fillText(letter, 64, 64)
+      const tex = new THREE.CanvasTexture(c)
+      tex.colorSpace = THREE.SRGBColorSpace
+      const label = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: tex, transparent: true, depthWrite: false,
+      }))
+      label.scale.set(1.0, 1.0, 1)
+      label.position.z = 0.02
+      g.add(label)
+      g.userData.type = type
+      g.userData.core = core
+      g.userData.halo = halo
+      return g
+    }
+    function spawnPowerup() {
+      const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)]
+      const dir = Math.random() < 0.5 ? -1 : 1
+      const yOff = (Math.random() - 0.5) * 4
+      const absY = state.swingHeight + yOff
+      const startX = dir < 0 ? 22 : -22
+      const mesh = makePowerup(type)
+      mesh.position.set(startX, absY, 0)
+      scene.add(mesh)
+      state.powerups.push({
+        mesh,
+        type,
+        vx: -dir * 0.10, // slow enough to be catchable
+        baseY: absY,
+        phase: Math.random() * Math.PI * 2,
+        life: 720, // ~12s onscreen if untouched
+      })
+    }
+    function disposePowerup(pu) {
+      scene.remove(pu.mesh)
+    }
+    function powerupHitsPiece(pu, piece) {
+      const px = pu.mesh.position.x
+      const py = pu.mesh.position.y
+      const piX = piece.position.x, piY = piece.position.y
+      const pw = piece.userData.pw, ph = piece.userData.ph
+      // Generous radial test — power-ups should be easy to grab.
+      const dx = px - piX, dy = py - piY
+      return Math.abs(dx) < pw / 2 + 0.5 && Math.abs(dy) < ph / 2 + 0.5
+    }
+    function onPowerupCollect(pu) {
+      const at = pu.mesh.position
+      spawnBurst(at.x, at.y, 0, 26, [POWERUP_COLORS[pu.type], 0xffffff, 0xffe94d])
+      state.flash = Math.max(state.flash, 0.45)
+      if (pu.type === 'wide')   state.buffWide = true
+      if (pu.type === 'freeze') state.buffFreeze = 180 // 3s @ 60fps
+      if (pu.type === 'auto')   state.buffAutoPerfect = true
+      // Floating label so the player knows what they grabbed.
+      const el = document.createElement('div')
+      el.className = 'pts-popup'
+      el.style.left = (window.innerWidth / 2) + 'px'
+      el.style.top = (window.innerHeight / 2 - 80) + 'px'
+      el.style.fontSize = '32px'
+      el.style.color = '#ffffff'
+      el.style.textShadow = `0 0 20px #${POWERUP_COLORS[pu.type].toString(16).padStart(6, '0')}`
+      el.textContent = pu.type === 'wide'   ? '+ WIDE PIECE'
+                     : pu.type === 'freeze' ? '+ FREEZE 3s'
+                     :                        '+ AUTO PERFECT'
+      document.body.appendChild(el)
+      setTimeout(() => el.remove(), 900)
+    }
+
     // Combo glow — tint every stacked piece's emissive by current combo level.
     function updateTowerGlow() {
       const level = Math.min(1, state.combo / 8) // saturate at combo 8
@@ -868,10 +1468,35 @@ export default function Game() {
         scene.remove(state.currentPiece)
         state.currentPiece = null
       }
-      const type = state.nextType || TYPES[Math.floor(Math.random() * TYPES.length)]
+      let type = state.nextType || TYPES[Math.floor(Math.random() * TYPES.length)]
+      // Checkpoint floors override the next piece with a forgiving wide flat — a breather + victory moment.
+      if (state.checkpointPending) {
+        state.checkpointPending = false
+        type = 'scaf_flat'
+      }
       state.nextType = TYPES[Math.floor(Math.random() * TYPES.length)]
       drawNextPiece(state.nextType)
+      // Color-code the next-preview border by piece difficulty (easy/med/hard).
+      if (nextCanvasRef.current) {
+        const diff = TYPE_DIFFICULTY[state.nextType] || 'med'
+        nextCanvasRef.current.classList.remove('diff-easy', 'diff-med', 'diff-hard')
+        nextCanvasRef.current.classList.add('diff-' + diff)
+      }
       state.currentPiece = makePiece(type)
+      // Scale buffs (one-shot): checkpoint takes precedence over WIDE pickup.
+      let scaleBoost = 0
+      if (state.pendingCheckpointScale) {
+        scaleBoost = state.pendingCheckpointScale
+        state.pendingCheckpointScale = 0
+      } else if (state.buffWide) {
+        scaleBoost = 1.5
+        state.buffWide = false
+      }
+      if (scaleBoost) {
+        state.currentPiece.scale.set(scaleBoost, 1, scaleBoost)
+        state.currentPiece.userData.pw *= scaleBoost
+        state.currentPiece.userData.pd *= scaleBoost
+      }
       // Don't reset swingAngle — let phase continue so player can't time a guaranteed perfect.
       // Add a small random kick to make the rhythm unpredictable.
       state.swingAngle += 0.7 + Math.random() * Math.PI
@@ -943,8 +1568,17 @@ export default function Game() {
       else if (good) { pts += 20; state.combo = Math.max(0, state.combo - 1) }
       else { state.combo = 0; pts = Math.max(5, pts - 20) }
       if (state.combo >= 2) pts = Math.round(pts * (1 + state.combo * 0.4))
+      // Foundation score multiplier — narrow base earns 2×, wide earns 0.7×.
+      pts = Math.max(1, Math.round(pts * state.scoreMult))
       if (state.combo > state.maxCombo) state.maxCombo = state.combo
       state.score += pts
+
+      // Score milestone banner — single banner per crossing.
+      while (state.milestoneIdx < SCORE_MILESTONES.length &&
+             state.score >= SCORE_MILESTONES[state.milestoneIdx]) {
+        spawnMilestoneBanner(SCORE_MILESTONES[state.milestoneIdx])
+        state.milestoneIdx++
+      }
 
       const sc = scoreRef.current
       if (sc) {
@@ -982,19 +1616,45 @@ export default function Game() {
 
       const burst = [0xffe94d, 0xff44ff, 0x44ffcc, 0xff4444, 0x44ff77]
       spawnBurst(lx, state.towerHeight + ph / 2, 0, perf ? 30 : isMiss ? 8 : 18, burst)
+      // Combo-scaled shake — bigger combos rumble harder.
+      const comboShake = Math.min(0.55, state.combo * 0.06)
       if (perf) {
         spawnStarBurst(lx, state.towerHeight + ph / 2, 0)
-        state.screenShake = 0.7
+        state.screenShake = 0.7 + comboShake
         state.camDolly = 1.0
         state.flash = 0.7
       }
-      else if (isMiss) { state.screenShake = 0.5 }
-      else { state.screenShake = 0.25 }
+      else if (isMiss) { state.screenShake = 0.5 + comboShake * 0.4 }
+      else { state.screenShake = 0.25 + comboShake * 0.6 }
 
       p.position.set(lx, state.towerHeight + ph / 2, 0)
       state.towerHeight += ph
       state.stackedPieces.push(p)
       towerGroup.add(p)
+
+      // ── Tower decorations: stencils every 5 floors, flags every 10, hard-hat every 25 ──
+      const floorN = state.stackedPieces.length
+      if (floorN % 5 === 0) {
+        const stencil = makeFloorNumber(floorN)
+        // Mount on the front face of the piece, facing camera
+        stencil.position.set(0, 0, p.userData.pd / 2 + 0.06)
+        p.add(stencil)
+      }
+      if (floorN % 10 === 0) {
+        // Alternate sides each 10-floor checkpoint, alternate colors each 20
+        const flag = makeFlag(floorN % 20 === 0 ? 0xff44ff : 0xffe94d)
+        const side = (floorN % 20 === 0) ? 1 : -1
+        flag.position.set(side * (p.userData.pw / 2 - 0.2), p.userData.ph / 2, 0)
+        p.add(flag)
+      }
+      if (floorN % 25 === 0) {
+        // Topping-out tradition — hard hat lands on the milestone floor
+        const hat = makeHardHat()
+        hat.position.set(0, p.userData.ph / 2 + 0.45, 0)
+        p.add(hat)
+        spawnStarBurst(lx, state.towerHeight + 0.5, 0)
+      }
+
       // Windowed directional bias — track only recent landings against the absolute
       // tower centerline (x = 0). Average of this window drives the warning + topple
       // pressure in the animate loop. Using a window (not a cumulative sum) means a
@@ -1019,6 +1679,12 @@ export default function Game() {
         spawnTierBanner(newTier)
       }
 
+      // Checkpoint floors — at 50/100/150 we queue an oversized forgiving piece.
+      if (floorN === 50 || floorN === 100 || floorN === 150) {
+        state.pendingCheckpointScale = 2.4
+        spawnCheckpointBanner(floorN)
+      }
+
       // Smooth per-floor swing scaling — faster ramp than before.
       const f = state.stackedPieces.length
       state.swingSpeed = Math.min(0.095, 0.028 + f * 0.0013)
@@ -1039,7 +1705,7 @@ export default function Game() {
       state.gameOverDelay = 160
     }
 
-    function startGame() {
+    function startGame(foundation = 'standard') {
       for (const p of state.stackedPieces) towerGroup.remove(p)
       state.stackedPieces = []
       for (const fp of state.fallingPieces) scene.remove(fp.mesh)
@@ -1048,7 +1714,10 @@ export default function Game() {
       state.projectiles = []
       for (const sw of state.shockwaves) scene.remove(sw.mesh)
       state.shockwaves = []
+      for (const pu of state.powerups) disposePowerup(pu)
+      state.powerups = []
       state.projectileTimer = 480 + Math.random() * 360 // generous grace period at start
+      state.powerupTimer = 900 + Math.random() * 600
       state.towerHeight = 0
       state.towerLeanX = 0
       state.towerVelocity = 0
@@ -1063,6 +1732,19 @@ export default function Game() {
       state.lastLandedPiece = null
       state.lastLandedSquash = 0
       state.projectileWarnings = []
+      // Foundation choice + score multiplier
+      const fnd = FOUNDATIONS[foundation] || FOUNDATIONS.standard
+      state.foundation = foundation
+      state.scoreMult = fnd.mult
+      // Reset milestones / buffs / wind / time-slow / checkpoint
+      state.milestoneIdx = 0
+      state.timeSlow = 0
+      state.wind = { active: false, dir: 0, frames: 0, offset: 0, timer: 1200 + Math.random() * 600, telegraphFrames: 0 }
+      state.buffWide = false
+      state.buffFreeze = 0
+      state.buffAutoPerfect = false
+      state.checkpointPending = false
+      state.pendingCheckpointScale = 0
       towerGroup.rotation.z = 0
       state.score = 0
       state.combo = 0
@@ -1085,6 +1767,10 @@ export default function Game() {
       state.gameActive = true
       state.nextType = TYPES[Math.floor(Math.random() * TYPES.length)]
       const base = makePiece('scaf_flat')
+      // Apply foundation scale to the base — narrow base = harder, wide = easier landing target.
+      base.scale.set(fnd.scale, 1, fnd.scale)
+      base.userData.pw *= fnd.scale
+      base.userData.pd *= fnd.scale
       base.position.y = base.userData.ph / 2
       state.towerHeight = base.userData.ph
       state.stackedPieces.push(base)
@@ -1100,12 +1786,102 @@ export default function Game() {
       // Snap rotation upright so the falling piece's visual footprint matches its scored x position.
       state.dropPiece.rotation.z = 0
       state.dropPiece.rotation.y = 0
+      // AUTO-PERFECT buff — snap X to the previous piece's center so the land scores perfect.
+      if (state.buffAutoPerfect) {
+        state.buffAutoPerfect = false
+        const prev = state.stackedPieces[state.stackedPieces.length - 1]
+        if (prev) state.dropPiece.position.x = prev.position.x
+      } else {
+        // Predict overhang for the near-miss time-slow effect.
+        const prev = state.stackedPieces[state.stackedPieces.length - 1]
+        if (prev) {
+          const lx = state.dropPiece.position.x
+          const newW = state.dropPiece.userData.pw
+          const prevX = prev.position.x, prevW = prev.userData.pw
+          const relX = lx - prevX
+          const hangoffAbs = Math.max(0, Math.abs(relX) + newW / 2 - prevW / 2)
+          const overhang = Math.min(1, hangoffAbs / Math.max(newW, 0.5))
+          // Sweet spot: clearly going to score but barely — drop falls in slow-mo to dramatize the moment.
+          if (overhang > 0.40 && overhang < 0.55) state.timeSlow = 36
+        }
+      }
       state.dropVel = 0
       state.currentPiece = null
       setTimeout(spawnNext, 450)
     }
 
-    engineRef.current = { startGame }
+    // Compose a shareable PNG: game canvas snapshot + branding + recap stats.
+    function generateScoreCard() {
+      const W = 800, H = 1100
+      const c = document.createElement('canvas')
+      c.width = W; c.height = H
+      const ctx = c.getContext('2d')
+      // Background gradient — match the in-game purple
+      const grad = ctx.createLinearGradient(0, 0, 0, H)
+      grad.addColorStop(0, '#180530')
+      grad.addColorStop(1, '#3a0a55')
+      ctx.fillStyle = grad
+      ctx.fillRect(0, 0, W, H)
+      // Header bar
+      ctx.fillStyle = '#ffe94d'
+      ctx.font = '900 64px "Segoe UI", sans-serif'
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.fillText('RADIAN', W / 2, 70)
+      ctx.fillStyle = '#aa88dd'
+      ctx.font = '800 22px "Segoe UI", sans-serif'
+      ctx.fillText('SCAFFOLDING · TOWER STACKER', W / 2, 115)
+      // Game-canvas snapshot (the WebGL canvas was rendered with preserveDrawingBuffer)
+      try {
+        ctx.drawImage(canvas, 40, 150, W - 80, 460)
+      } catch {
+        // If the snapshot fails for any reason, fall through with a flat panel
+        ctx.fillStyle = '#240540'
+        ctx.fillRect(40, 150, W - 80, 460)
+      }
+      // Big score
+      ctx.fillStyle = '#ffe94d'
+      ctx.font = '900 100px "Segoe UI", sans-serif'
+      ctx.fillText(state.score.toLocaleString(), W / 2, 700)
+      ctx.fillStyle = '#aa88dd'
+      ctx.font = '800 18px "Segoe UI", sans-serif'
+      ctx.fillText('FINAL SCORE', W / 2, 760)
+      // Recap row
+      const stats = [
+        { num: String(state.stackedPieces.length), lbl: 'FLOORS', col: '#44ffcc' },
+        { num: String(state.perfectCount),         lbl: 'PERFECTS', col: '#ffe94d' },
+        { num: state.maxCombo + '×',               lbl: 'BEST COMBO', col: '#ff44ff' },
+        { num: String(state.tierReached),          lbl: 'TIER', col: '#00d4ff' },
+      ]
+      const colW = (W - 80) / stats.length
+      stats.forEach((s, i) => {
+        const cx = 40 + colW * (i + 0.5)
+        ctx.fillStyle = s.col
+        ctx.font = '900 56px "Segoe UI", sans-serif'
+        ctx.fillText(s.num, cx, 860)
+        ctx.fillStyle = '#aa88dd'
+        ctx.font = '800 14px "Segoe UI", sans-serif'
+        ctx.fillText(s.lbl, cx, 910)
+      })
+      // Foundation + date
+      ctx.fillStyle = '#ffffff'
+      ctx.font = '700 18px "Segoe UI", sans-serif'
+      const fnd = FOUNDATIONS[state.foundation] || FOUNDATIONS.standard
+      ctx.fillText(`${fnd.label} FOUNDATION · ${new Date().toLocaleDateString()}`, W / 2, 970)
+      // Footer CTA
+      ctx.fillStyle = '#ffe94d'
+      ctx.font = '900 26px "Segoe UI", sans-serif'
+      ctx.fillText('RADIAN SCAFFOLDING', W / 2, 1030)
+      ctx.fillStyle = '#aa88dd'
+      ctx.font = '700 16px "Segoe UI", sans-serif'
+      ctx.fillText('Built to stand. Built to stack.', W / 2, 1062)
+      // Trigger download
+      const link = document.createElement('a')
+      link.download = `radian-stacker-${state.score}-${Date.now()}.png`
+      link.href = c.toDataURL('image/png')
+      link.click()
+    }
+
+    engineRef.current = { startGame, generateScoreCard }
 
     // Input
     const onKey = (e) => {
@@ -1123,10 +1899,76 @@ export default function Game() {
       raf = requestAnimationFrame(animate)
       state.frameN++
 
+      // ── Worksite ambience: tape sway, bg crane drift, dust motes, worker head-tilt, spotlight follow ──
+      for (const t of tapeSegments) {
+        t.mesh.position.y = t.baseY + Math.sin(state.frameN * 0.045 + t.phase) * 0.10
+        t.mesh.rotation.z = Math.sin(state.frameN * 0.030 + t.phase) * 0.05
+      }
+      // Dust motes / sparks drift up, wrap when they exit the top
+      {
+        const arr = sparks.geometry.attributes.position.array
+        for (let i = 0; i < sparkCount; i++) {
+          arr[i * 3 + 1] += sparkVel[i]
+          arr[i * 3]     += Math.sin(state.frameN * 0.012 + i) * 0.006
+          if (arr[i * 3 + 1] > 32) {
+            arr[i * 3]     = (Math.random() - 0.5) * 36
+            arr[i * 3 + 1] = -2
+            arr[i * 3 + 2] = (Math.random() - 0.5) * 36 - 4
+          }
+        }
+        sparks.geometry.attributes.position.needsUpdate = true
+      }
+      // Workers: gradually tilt heads up as the tower grows, plus subtle idle wobble
+      for (const w of workers) {
+        const target = -Math.min(1.0, state.swingHeight * 0.022)
+                     + Math.sin(state.frameN * 0.012 + w.userData.phase) * 0.06
+        w.userData.head.rotation.x += (target - w.userData.head.rotation.x) * 0.03
+      }
+      // Spotlight targets ride up with the tower so the cones keep illuminating the action
+      for (const s of siteSpots) {
+        const ty = Math.max(6, state.swingHeight * 0.65)
+        s.target.position.y += (ty - s.target.position.y) * 0.04
+      }
+
+      // Wind gusts — telegraphed sustained drift on the swing X.
+      // Smoothly ease the wind offset toward target so onset/decay feel like air, not a snap.
+      {
+        const w = state.wind
+        if (state.gameActive) {
+          if (w.telegraphFrames > 0) w.telegraphFrames--
+          if (w.active) {
+            w.frames--
+            if (w.frames <= 0) w.active = false
+          } else if (w.telegraphFrames === 0) {
+            w.timer--
+            if (w.timer <= 0 && state.stackedPieces.length >= 8) {
+              w.dir = Math.random() < 0.5 ? -1 : 1
+              w.telegraphFrames = 50
+              spawnWindWarning(w.dir)
+              // Schedule the actual gust to start after the telegraph window
+              setTimeout(() => {
+                if (cancelled) return
+                w.active = true
+                w.frames = 220 + Math.floor(Math.random() * 100) // ~3.5–5.3s
+              }, 800)
+              // Reset cooldown — next gust 18–32s away
+              w.timer = 1080 + Math.floor(Math.random() * 840)
+            }
+          }
+        }
+        const target = w.active ? w.dir * 2.6 : 0
+        w.offset += (target - w.offset) * 0.04
+      }
+
       // Swing
       if (state.currentPiece && state.gameActive) {
-        state.swingAngle += state.swingSpeed
-        const sx = Math.sin(state.swingAngle) * state.swingAmp
+        // Freeze buff suspends the swing; phase doesn't advance.
+        if (state.buffFreeze > 0) {
+          state.buffFreeze--
+        } else {
+          state.swingAngle += state.swingSpeed
+        }
+        const sx = Math.sin(state.swingAngle) * state.swingAmp + state.wind.offset
         state.currentPiece.position.set(sx, state.swingHeight, 0)
         state.currentPiece.rotation.z = Math.sin(state.swingAngle) * 0.22
         state.currentPiece.rotation.y = state.frameN * 0.01
@@ -1147,6 +1989,10 @@ export default function Game() {
             1,
             [0xcc88ff, 0xff88ff, 0xffe94d]
           )
+        }
+        // Freeze visual pulse — extra ghost wisp around the piece while frozen.
+        if (state.buffFreeze > 0 && state.frameN % 2 === 0) {
+          spawnBurst(sx, state.swingHeight, 0, 2, [0x00d4ff, 0xaaffff, 0xffffff])
         }
       }
 
@@ -1176,16 +2022,19 @@ export default function Game() {
         }
       }
 
-      // Drop
+      // Drop — falls in slow-mo when state.timeSlow is active (set on near-miss in drop()).
       if (state.dropPiece) {
-        state.dropVel += 0.055
-        state.dropPiece.position.y -= state.dropVel
+        const slowMul = state.timeSlow > 0 ? 0.42 : 1
+        if (state.timeSlow > 0) state.timeSlow--
+        state.dropVel += 0.055 * slowMul
+        state.dropPiece.position.y -= state.dropVel * slowMul
         if (state.frameN % 3 === 0) {
           spawnBurst(state.dropPiece.position.x, state.dropPiece.position.y + state.dropPiece.userData.ph * 0.5, 0, 3, [0xcc88ff, 0xffffff, 0xff88ff])
         }
         const land = state.towerHeight + state.dropPiece.userData.ph / 2
         if (state.dropPiece.position.y <= land) {
           state.dropPiece.position.y = land
+          state.timeSlow = 0
           const p = state.dropPiece
           state.dropPiece = null
           state.dropping = false
@@ -1369,6 +2218,37 @@ export default function Game() {
         }
       }
 
+      // ── Power-ups: spawn timer, drift, pulse, hit-test against the swinging piece ──
+      if (state.gameActive) {
+        state.powerupTimer -= 1
+        if (state.powerupTimer <= 0 && state.powerups.length === 0) {
+          spawnPowerup()
+          // Fairly rare: 18–32s between pickups
+          state.powerupTimer = 1080 + Math.floor(Math.random() * 840)
+        }
+      }
+      for (let i = state.powerups.length - 1; i >= 0; i--) {
+        const pu = state.powerups[i]
+        pu.mesh.position.x += pu.vx
+        pu.mesh.position.y = pu.baseY + Math.sin((state.frameN + pu.phase * 60) * 0.05) * 0.35
+        // Spin + pulsing halo
+        pu.mesh.rotation.y += 0.04
+        const halo = pu.mesh.userData.halo
+        const haloPulse = 3.2 + Math.sin(state.frameN * 0.1 + pu.phase) * 0.55
+        halo.scale.set(haloPulse, haloPulse, 1)
+        pu.life--
+        if (pu.life <= 0 || Math.abs(pu.mesh.position.x) > 26) {
+          disposePowerup(pu)
+          state.powerups.splice(i, 1)
+          continue
+        }
+        if (state.currentPiece && powerupHitsPiece(pu, state.currentPiece)) {
+          onPowerupCollect(pu)
+          disposePowerup(pu)
+          state.powerups.splice(i, 1)
+        }
+      }
+
       // Shockwave rings — expand and fade after projectile impacts.
       for (let i = state.shockwaves.length - 1; i >= 0; i--) {
         const sw = state.shockwaves[i]
@@ -1490,7 +2370,10 @@ export default function Game() {
   }, [])
 
   const handleStart = () => {
-    engineRef.current?.startGame()
+    engineRef.current?.startGame(foundation)
+  }
+  const handleSaveCard = () => {
+    engineRef.current?.generateScoreCard()
   }
 
   return (
@@ -1520,24 +2403,59 @@ export default function Game() {
           </div>
         </div>
         <div id="hint"><span className="key">SPACE</span> to drop · tap anywhere</div>
+
+        <div id="brand-mark">
+          <img src="/logo.png" alt="Radian" />
+          <div className="brand-text">
+            <div className="brand-name">RADIAN</div>
+            <div className="brand-sub">Scaffolding</div>
+          </div>
+        </div>
       </div>
 
       {showStart && (
         <div className="screen" id="start-screen">
-          <div className="screen-title">Radian<br /><span className="yl">Tower</span><br />Stacker</div>
-          <div className="screen-sub">Stack crazy scaffold pieces!</div>
+          <div className="brand-block">
+            <img className="brand-logo" src="/logo.png" alt="Radian" />
+            <div className="brand-wordmark">RADIAN</div>
+            <div className="brand-tagline">Scaffolding · Built to Stand</div>
+          </div>
+          <div className="screen-title">Tower<br /><span className="yl">Stacker</span></div>
+          <div className="screen-sub">Stack the scaffold · Beat the wobble · Build the skyline</div>
+
+          <div className="foundation-picker">
+            <div className="foundation-label">Choose your foundation</div>
+            <div className="foundation-row">
+              {Object.entries(FOUNDATIONS).map(([key, fnd]) => (
+                <button
+                  key={key}
+                  className={'foundation-btn' + (foundation === key ? ' selected' : '')}
+                  onClick={() => setFoundation(key)}
+                >
+                  <div className="foundation-name">{fnd.label}</div>
+                  <div className="foundation-sub">{fnd.sub}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <button className="big-btn" onClick={handleStart}>Play</button>
+          <div className="brand-footer">A Radian Scaffolding experience</div>
         </div>
       )}
       {showGameOver && (
         <div className="screen" id="gameover-screen">
+          <div className="brand-block small">
+            <img className="brand-logo" src="/logo.png" alt="Radian" />
+            <div className="brand-wordmark">RADIAN</div>
+          </div>
           <div className="screen-title">Tower<br /><span className="yl">Toppled!</span></div>
           <div id="final-score-num" ref={finalScoreRef}>0</div>
           <div className="screen-sub">Final Score</div>
           <div className="recap">
             <div className="stat">
               <div className="stat-num" ref={finalHeightRef}>0</div>
-              <div className="stat-lbl">Height</div>
+              <div className="stat-lbl">Floors Built</div>
             </div>
             <div className="stat">
               <div className="stat-num gold" ref={finalPerfectRef}>0</div>
@@ -1552,7 +2470,13 @@ export default function Game() {
               <div className="stat-lbl">Tier Reached</div>
             </div>
           </div>
-          <button className="big-btn" onClick={handleStart}>Try Again</button>
+          <div className="gameover-actions">
+            <button className="big-btn" onClick={handleStart}>Build Again</button>
+            <button className="big-btn secondary" onClick={handleSaveCard}>Save Score Card</button>
+          </div>
+          <div className="brand-footer">
+            Want a real tower that stays up? <span className="cta">Radian Scaffolding</span>
+          </div>
         </div>
       )}
     </div>

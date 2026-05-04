@@ -114,4 +114,105 @@ The numbered ordering is approximate — the file mixes a few of these blocks in
 
 ### Adding a new piece type
 
-`makePiece(type)` in `Game.jsx` is a giant `if/else` chain. Each branch builds a `THREE.Group` from the `pole / ledger / transom / board / diag` helpers and sets `g.userData.pw`, `g.userData.ph`, `g.userData.pd` (width / height / depth). Add the type string to the `TYPES` array at the top of the file and add a matching icon renderer in the `shapes` map inside `drawNextPiece()`. Both pw and the next-piece icon must reflect the actual visual footprint, otherwise hangoff scoring will be wrong and players will see "miss" calls on visually-clean drops.
+`makePiece(type)` in `Game.jsx` is a giant `if/else` chain. Each branch builds a `THREE.Group` from the `pole / ledger / transom / board / diag` helpers and sets `g.userData.pw`, `g.userData.ph`, `g.userData.pd` (width / height / depth). Add the type string to the `TYPES` array at the top of the file and add a matching icon renderer in the `shapes` map inside `drawNextPiece()`. Both pw and the next-piece icon must reflect the actual visual footprint, otherwise hangoff scoring will be wrong and players will see "miss" calls on visually-clean drops. Also add an entry to `TYPE_DIFFICULTY` (`'easy' | 'med' | 'hard'`) so the next-piece preview gets the correct colored border.
+
+## Branding & conference-booth framing
+
+The game is intended to run on a screen at scaffolding-industry conferences. Every visible surface is treated as branded real estate; **do not strip or genericize branding** without checking first.
+
+- **Persistent corner brand mark** (`#brand-mark` in `Game.jsx`) sits bottom-right over the canvas with the logo + RADIAN / Scaffolding label. Any over-shoulder photo of the screen includes the brand. Don't remove or hide it during gameplay.
+- **Start screen** leads with the pulsing logo (`brand-block` + `brand-logo`), RADIAN wordmark, and "Scaffolding · Built to Stand" tagline above the game title. Foundation picker sits below the title.
+- **Game-over screen** carries a smaller logo+wordmark block and a CTA footer ("Want a real tower that stays up? Radian Scaffolding").
+- **Tier banner names** (`TIER_NAMES` in `Game.jsx`) are construction-themed: GROUND FLOOR, LOW-RISE, MID-RISE, HIGH-RISE, TOWER CREW, SKYLINE, SUPERSTRUCTURE, LANDMARK, MONUMENT, RADIAN LEGEND. Don't replace with generic arcade words.
+- **Logo as projectile** (existing) is the primary in-world brand placement during gameplay — see the "Projectile is the company logo" invariant.
+
+## Construction-site environment
+
+The world block in `Game.jsx` (search `// World — Radian construction site`) replaces the abstract purple disc with a worksite. All of these are scenery — they don't affect gameplay but they sell the theme. Reorder/reposition freely, but if you remove pieces, keep the **safety fence + branded RADIAN sign** (those are the primary brand placements at ground level).
+
+- **Asphalt pad + concrete slab + 8 yellow stripes** under the tower base.
+- **Orange chain-link safety fence** ring (18 posts at radius 9.2 + top/bottom torus rails).
+- **Caution tape** (18 yellow box segments between posts) — animated sway in the animate loop via `tapeSegments` array; each segment has `baseY` and `phase` for sin-based Y bob and Z tilt.
+- **6 traffic cones** around the slab.
+- **Wooden pallet** stacked with red bricks (front-left).
+- **Green dumpster** with wheels (front-right).
+- **RADIAN SCAFFOLDING site sign** (back, two posts + canvas-textured wordmark board).
+- **Branded delivery truck** at (-9.2, 0, -3.8) — yellow cab + white cargo box with canvas-textured RADIAN / SCAFFOLDING CO. panels on both sides + wheels + windshield.
+- **Foreman's blueprint table** at (-3.2, 0, -7.0) — wood top, blue blueprint sheet with grid lines, rolled-up plan, coffee mug.
+- **Toolbox / wheelbarrow / sandbag pile** scattered around the slab.
+- **3 worker silhouettes** (`workers` array) — red/blue/yellow shirts with hard hats. Heads sit on a `headPivot` group whose `rotation.x` lerps toward `-min(1.0, swingHeight * 0.022)` plus an idle wobble — so they visibly tilt up to watch the tower grow.
+- **2 spotlight poles** (`siteSpots` array) at (±9.5, 9.5) — pole + housing + lens + real `THREE.SpotLight` (no shadows for cost). Targets ride up with the tower in the animate loop.
+- **90 floating dust motes / sparks** as a `THREE.Points` cloud (`sparks` + `sparkVel`) drifting upward with subtle horizontal drift; wraps when they exit the top.
+
+**Removed** (don't re-add unless asked): distant city skyline silhouette and slow-rotating background tower crane — the user explicitly didn't want those.
+
+## Tower decorations (in `landPiece`)
+
+After `towerGroup.add(p)`, three decorations are attached as children of the just-landed piece (so they squash with it and clean up automatically on restart):
+
+- **Floor stencil** every 5th floor — `makeFloorNumber(n)` returns a canvas-textured plane (yellow stencil + dark outline) mounted on the camera-facing +z side.
+- **Safety flag** every 10th floor — `makeFlag(color)` returns pole + cloth + golden tip; alternates side and color (gold default, magenta on 20-floor crossings).
+- **Topping-out hard hat** every 25th floor — `makeHardHat()` returns dome + brim + dark band + tiny RADIAN crest. Sits on top of the milestone floor with a star burst.
+
+These helpers (plus `makeWorker`, `makeBrandedTruck`, `makeBlueprintTable`, `makeToolbox`, `makeWheelbarrow`, `makeSandbagPile`) live in the "Branded prop builders" block right after `makePiece` closes.
+
+## Game-depth systems
+
+Layered on top of the base stacker mechanics. State is held on the engine `state` object (not React state) and reset in `startGame`. Each system has a one-shot reset path you must keep working.
+
+### Foundation choice (start screen)
+
+- React state `foundation` ('narrow' | 'standard' | 'wide') is set by clicking one of three cards on the start screen, then passed to `startGame(foundation)`.
+- `FOUNDATIONS` map (top of file) defines `{ scale, mult, label, sub }`. Narrow = 0.65× base / 2.0× score, Standard = 1.0/1.0, Wide = 1.35/0.7.
+- `startGame` scales the base piece (`base.scale.set(fnd.scale, 1, fnd.scale)` and updates `userData.pw/pd` to match) and sets `state.scoreMult`.
+- `landPiece` multiplies final `pts` by `state.scoreMult`. Don't apply the multiplier elsewhere or you'll double-count.
+
+### Power-ups
+
+- Three pickup types defined in `POWERUP_TYPES`: `wide` (gold W), `freeze` (cyan F), `auto` (magenta A). Colors in `POWERUP_COLORS`.
+- `makePowerup(type)` returns a `THREE.Group` with a glowing core sphere + halo sprite (uses `glowTex`, defined earlier in the projectile section) + canvas-textured letter sprite. Halo is stored on `userData.halo` for pulse animation.
+- `spawnPowerup()` picks a random type/dir/yOff and pushes onto `state.powerups` with `vx = -dir * 0.10` (slow enough to be catchable). Animate loop spawns one when `powerupTimer` hits 0 AND `state.powerups.length === 0` (one at a time only) — cooldown 18–32 s.
+- `powerupHitsPiece` is a generous radial test against the swinging piece. `onPowerupCollect` sets the corresponding buff flag and shows a floating label.
+- Effects (consumed in `spawnNext` or `drop`):
+  - `state.buffWide` → next spawned piece scales 1.5× (xz only); `userData.pw/pd` updated to match.
+  - `state.buffFreeze` → frames remaining; in animate's swing block, `swingAngle` doesn't advance while `> 0`. Cyan particle wisps spawn around the frozen piece.
+  - `state.buffAutoPerfect` → in `drop()`, snaps `dropPiece.position.x` to the previous piece's center.
+- Reset all three buffs + `state.powerups` (call `disposePowerup` on each) + `powerupTimer` in `startGame`.
+
+### Wind gusts
+
+- `state.wind = { active, dir, frames, offset, timer, telegraphFrames }`.
+- Gates: never fires before floor 8; cooldown 18–32 s.
+- Sequence: timer hits 0 → `spawnWindWarning(dir)` (yellow/cyan arrow popup) + 50 frames of telegraph → `setTimeout` 800 ms then `wind.active = true` for 220–320 frames.
+- `wind.offset` eases toward `wind.dir * 2.6` while active, back to 0 when not. Applied as additive X to the swinging piece position: `sx = sin(angle) * amp + wind.offset`.
+- The setTimeout is wrapped in a `cancelled` check so it doesn't fire after unmount. Don't remove that guard.
+
+### Checkpoint floors
+
+- At `floorN === 50 || 100 || 150`, `landPiece` sets `state.pendingCheckpointScale = 2.4` and calls `spawnCheckpointBanner(floorN)`.
+- `spawnNext` consumes `pendingCheckpointScale` (precedence over `buffWide`), forces `type = 'scaf_flat'`, and applies the scale + updates `userData.pw/pd`. Same scale-precedence pattern as the WIDE buff.
+
+## Polish / juice
+
+- **Combo-scaled screen shake** in `landPiece`: `comboShake = min(0.55, combo * 0.06)` added to the perfect/miss/normal shake values. Bigger combos rumble harder.
+- **Time-slow on near-miss drop**: `drop()` predicts overhang from the dropped X; if 0.40–0.55 (clearly going to score but barely), sets `state.timeSlow = 36`. Drop block in animate multiplies both `dropVel` increment and `position.y` decrement by 0.42 while `timeSlow > 0`. Cleared on land.
+- **Score milestone banners**: `SCORE_MILESTONES = [2500, 5000, 10000, 25000, 50000, 100000, 250000, 500000]`. After every score change in `landPiece`, a `while` loop fires `spawnMilestoneBanner` for each crossed threshold and increments `state.milestoneIdx`. Reset `milestoneIdx = 0` in `startGame`.
+- **Difficulty-coded next-piece border**: `TYPE_DIFFICULTY` map (top of file) buckets each type into easy/med/hard. `spawnNext` toggles `diff-easy/diff-med/diff-hard` classes on `nextCanvasRef.current` after `drawNextPiece`. Color: green/yellow/pink. CSS in `Game.css` under the "Difficulty-coded border" comment.
+- **Score card download**: `engineRef.current.generateScoreCard()` composes an 800×1100 PNG (header + game-canvas snapshot + big score + 4-stat row + foundation/date + branded footer) and triggers a download via an anchor element. **Requires `preserveDrawingBuffer: true` on the WebGLRenderer** — already set; don't remove. Triggered by the "Save Score Card" button on the game-over screen.
+
+## Banner system
+
+There are now four banner variants, all use the `.tier-banner` base class with the same `tierSweep` animation:
+
+- `.tier-banner` — default tier-up (gold/orange).
+- `.tier-banner.milestone` — score milestones (cyan).
+- `.tier-banner.checkpoint` — checkpoint floors (green with yellow sub).
+- `.bias-warn.wind` — wind warning (yellow text + cyan arrows; uses `.bias-warn` sweep, not `.tier-banner`).
+
+When adding a new banner type, prefer reusing `.tier-banner` with a modifier class so the timing and sweep stay consistent.
+
+## React state vs engine state
+
+- **React state** (`useState`): `showStart`, `showGameOver`, `foundation`. Anything that drives the start/game-over overlays or DOM-only inputs.
+- **Engine state** (`state` object inside the `useEffect` closure): everything per-frame. Mutating it never re-renders. HUD updates that fire every frame poke DOM nodes via refs (`scoreRef`, `heightNumRef`, `balanceNeedleRef`, etc.).
+- **`engineRef.current`** exposes `{ startGame, generateScoreCard }` to the React layer. Add new exposures here when you need React → engine calls.
