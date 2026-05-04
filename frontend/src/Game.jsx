@@ -1813,8 +1813,9 @@ export default function Game() {
       // Initial camera placement — Z scales with viewport aspect so the start
       // shot is framed consistently across screen shapes. The animate loop will
       // ease toward its dynamic target from here.
-      camera.position.set(0, 3, (22 + 5.8 * 0.6) * state.aspectScale)
-      camera.lookAt(0, 4, 0)
+      // Match the fixed isometric framing used by the animate loop.
+      camera.position.set(0, 14, 20 * state.aspectScale)
+      camera.lookAt(0, 2, 0)
       if (scoreRef.current) scoreRef.current.textContent = '0'
       if (heightNumRef.current) heightNumRef.current.textContent = '0'
       if (comboTextRef.current) comboTextRef.current.style.opacity = '0'
@@ -2389,35 +2390,35 @@ export default function Game() {
       //      aspect (narrower screens pull camera back further). Prevents the
       //      swinging piece from exiting the frame on portrait / split-view layouts.
       //   LookAt: always aimed at the swing area so the dropper stays in view.
-      // Perfect-drop dolly: punch in then ease out.
+      // Fixed angled top-down (isometric-style) camera.
+      //   - Z is locked (no amp/height-driven dolly), so framing never breathes.
+      //   - Camera sits ~12 units above its lookAt and ~20 units back, giving a
+      //     ~31° downward tilt that shows both the top face of the swinging
+      //     piece AND the stacked tower height below it.
+      //   - Tracks the tower vertically by lerping the lookAt toward the swing
+      //     area; the camera Y rides the lookAt at a fixed offset.
+      //   - Perfect-drop dolly is preserved as a small Z punch-in only.
       if (state.camDolly > 0) {
         state.camDolly *= 0.88
         if (state.camDolly < 0.01) state.camDolly = 0
       }
-      const ampRoom = state.swingAmp * 0.6      // wider swing → further back
-      const heightRoom = Math.min(1, state.stackedPieces.length / 70) * 4
-      const baseZ = 22 + ampRoom + heightRoom
-      // FOV compensation: changing FOV is a "lens character" choice, NOT a
-      // difficulty knob. Pull the camera back at low FOV / push in at high FOV
-      // so the visible world width at the tower stays ~constant. 65° = 1.0.
+      const ISO_DY = 12   // camera elevation above lookAt
+      const ISO_DZ = 20   // camera distance back from tower axis
+      // FOV compensation so slider doesn't change perceived framing width.
       const fovScale = Math.tan((65 * Math.PI / 180) / 2) /
                        Math.tan((camera.fov * Math.PI / 180) / 2)
-      const camZTarget = baseZ * state.aspectScale * fovScale - state.camDolly * 6
-      const camLerp = state.camDolly > 0.05 ? 0.18 : 0.08
-      // Camera Y lead — how far below the swinging piece the camera sits.
-      // Early game: bigger lead (camera lower) so foundation + props stay framed.
-      // Tall game: smaller lead so the dropper doesn't drift to the top edge.
-      const yLeadBlend = Math.min(1, state.stackedPieces.length / 40)
-      const yLead = 7 - yLeadBlend * 4   // 7 early → 3 by floor 40
-      const focusY = state.swingHeight > 0
-        ? state.swingHeight - yLead
+      const camZTarget = ISO_DZ * state.aspectScale * fovScale - state.camDolly * 4
+      // LookAt sits a few units below the swinger so stacked floors stay framed.
+      const lookAtTarget = state.swingHeight > 0
+        ? state.swingHeight - 4
         : state.towerHeight + 2
-      const camYTarget = Math.max(4, focusY)
+      // Smooth Y tracking; lerp toward (lookAt + ISO_DY).
+      const camYTarget = Math.max(ISO_DY, lookAtTarget + ISO_DY)
       camera.position.y += (camYTarget - camera.position.y) * 0.08
-      camera.position.z += (camZTarget - camera.position.z) * camLerp
-      const lookAt = state.swingHeight > 0
-        ? state.swingHeight - 1
-        : state.towerHeight + 2
+      camera.position.z += (camZTarget - camera.position.z) * 0.08
+      // The lookAt itself is lerped via camera Y above; recompute the actual
+      // aim point each frame so the angle stays fixed at ~31° down.
+      const lookAt = camera.position.y - ISO_DY
       camera.lookAt(state.shakeX, lookAt, 0)
 
       // Shake
