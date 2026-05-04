@@ -1,6 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import './Game.css'
+import {
+  addLocalScore,
+  clearLocalLeaderboard,
+  fetchMergedLeaderboard,
+  loadLocalLeaderboard,
+  submitOnline,
+} from './leaderboard'
+
+const FOUNDATION_LABEL = { narrow: 'NARROW', standard: 'STANDARD', wide: 'WIDE' }
+function formatDate(iso) {
+  if (!iso) return ''
+  try {
+    const d = new Date(iso)
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  } catch { return '' }
+}
 
 const TYPES = [
   'scaf_flat',
@@ -56,15 +72,33 @@ export default function Game() {
   const heightNumRef = useRef(null)
   const comboTextRef = useRef(null)
   const balanceNeedleRef = useRef(null)
-  const finalScoreRef = useRef(null)
-  const finalHeightRef = useRef(null)
-  const finalPerfectRef = useRef(null)
-  const finalComboRef = useRef(null)
-  const finalTierRef = useRef(null)
-
   const [showStart, setShowStart] = useState(true)
   const [showGameOver, setShowGameOver] = useState(false)
+  const [showPause, setShowPause] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [showLeaderboard, setShowLeaderboard] = useState(false)
   const [foundation, setFoundation] = useState('standard')
+  const [fov, setFov] = useState(65)
+  // Recap is set once when the game-over delay completes — using state so the
+  // values are present at the time the game-over JSX mounts (refs were null
+  // because the divs hadn't rendered yet, leaving the recap stuck at zeros).
+  const [recap, setRecap] = useState({ score: 0, floors: 0, perfects: 0, maxCombo: 0, tier: 0, foundation: 'standard' })
+  // Set when the most recent run is recorded into the leaderboard so we can
+  // highlight that row in the leaderboard view.
+  const [lastEntryId, setLastEntryId] = useState(null)
+  // Active player profile — collected on first visit (name, email, phone) and
+  // sticky across runs. Persisted to localStorage so booth visitors don't have
+  // to retype between attempts. `null` until they've filled the form.
+  const [player, setPlayer] = useState(() => {
+    try {
+      const raw = localStorage.getItem('radian_player')
+      if (raw) return JSON.parse(raw)
+      // Backwards-compat: pull a legacy name-only entry into the new shape.
+      const legacy = localStorage.getItem('radian_player_name')
+      if (legacy) return { name: legacy, email: '', phone: '' }
+      return null
+    } catch { return null }
+  })
 
   // Mutable refs the engine writes into; exposed to React via the start handler
   const engineRef = useRef(null)
@@ -88,12 +122,23 @@ export default function Game() {
     camera.position.set(0, 3, 28)
     camera.lookAt(0, 6, 0)
 
+    // Aspect-aware framing: pull the camera back on narrow / portrait viewports so
+    // the swing arc and tower base stay on screen. aspectScale is 1.0 at 16:9,
+    // grows up to 1.6 as the viewport gets narrower than that, and never shrinks
+    // below 0.9 (ultrawide). Read by the animate loop's camZTarget.
+    const computeAspectScale = (w, h) => {
+      const a = w / h
+      const ref = 16 / 9
+      // Below ref → narrower → larger scale (further back).
+      return Math.max(0.9, Math.min(1.6, ref / a))
+    }
     const onResize = () => {
       W = window.innerWidth
       H = window.innerHeight
       renderer.setSize(W, H)
       camera.aspect = W / H
       camera.updateProjectionMatrix()
+      state.aspectScale = computeAspectScale(W, H)
     }
     window.addEventListener('resize', onResize)
 
@@ -1025,10 +1070,18 @@ export default function Game() {
       towerLeanX: 0,
       towerVelocity: 0,
       towerAngle: 0,
-      // Windowed recent landing X positions (world / tower-local equivalent).
-      // We average these for the cumulative-bias check so leftward corrections
-      // actually shrink the drift instead of fighting an unbounded history sum.
-      recentDrifts: [],
+      // Exponential moving average of recent per-piece offsets (relX = lx - prevX).
+      // Tracks "directional bias of recent stacking" — positive = drifting right,
+      // negative = drifting left. EMA (α=0.3) means one corrective stack visibly
+      // moves the signal, instead of being diluted across a 10-wide window. Using
+      // relX (not absolute lx) means a centered stack on a drifted tower reads as
+      // 0 bias — the angular lean physics already handles existing tower tilt;
+      // this signal is about whether the player is making it WORSE.
+      avgDrift: 0,
+      // Cached aspect scale (>1 = pull camera further back). Updated on resize.
+      aspectScale: 1,
+      // ESC pause flag — gameplay updates skip while true; renderer keeps drawing.
+      paused: false,
       currentPiece: null,
       nextType: null,
       swingAngle: 0,
@@ -1082,6 +1135,7 @@ export default function Game() {
       // Checkpoint floors (50/100/150) — set true when crossed, consumed in spawnNext
       checkpointPending: false,
     }
+    state.aspectScale = computeAspectScale(W, H)
     const towerGroup = new THREE.Group()
     scene.add(towerGroup)
 
@@ -1655,14 +1709,13 @@ export default function Game() {
         spawnStarBurst(lx, state.towerHeight + 0.5, 0)
       }
 
-      // Windowed directional bias — track only recent landings against the absolute
-      // tower centerline (x = 0). Average of this window drives the warning + topple
-      // pressure in the animate loop. Using a window (not a cumulative sum) means a
-      // handful of corrective left stacks actually pulls the drift back below the
-      // warning threshold — otherwise old rightward history would lock you out of recovery.
-      state.recentDrifts.push(lx)
-      const DRIFT_WINDOW = 10
-      if (state.recentDrifts.length > DRIFT_WINDOW) state.recentDrifts.shift()
+      // Directional-bias EMA — feeds the warning + topple pressure in the animate loop.
+      // We track relX (per-piece offset from the piece below), not absolute lx, so
+      // "stack left to recover" reads as immediately corrective even on a drifted tower.
+      // EMA α=0.3 means a single leftward stack moves the signal ~30% toward that sample —
+      // responsive enough that the HUD reacts within 1–2 lands.
+      const DRIFT_ALPHA = 0.3
+      state.avgDrift = state.avgDrift * (1 - DRIFT_ALPHA) + relX * DRIFT_ALPHA
       updateTowerGlow()
 
       // Squash-on-land — kick scale to flat-and-wide, animate loop lerps it back.
@@ -1722,7 +1775,7 @@ export default function Game() {
       state.towerLeanX = 0
       state.towerVelocity = 0
       state.towerAngle = 0
-      state.recentDrifts = []
+      state.avgDrift = 0
       state.biasWarnCooldown = 0
       state.tier = 0
       state.perfectCount = 0
@@ -1757,8 +1810,11 @@ export default function Game() {
       state.flash = 0
       state.dropPiece = null
       state.gameOverDelay = 0
-      camera.position.set(0, 3, 28)
-      camera.lookAt(0, 7, 0)
+      // Initial camera placement — Z scales with viewport aspect so the start
+      // shot is framed consistently across screen shapes. The animate loop will
+      // ease toward its dynamic target from here.
+      camera.position.set(0, 3, (22 + 5.8 * 0.6) * state.aspectScale)
+      camera.lookAt(0, 4, 0)
       if (scoreRef.current) scoreRef.current.textContent = '0'
       if (heightNumRef.current) heightNumRef.current.textContent = '0'
       if (comboTextRef.current) comboTextRef.current.style.opacity = '0'
@@ -1881,13 +1937,45 @@ export default function Game() {
       link.click()
     }
 
-    engineRef.current = { startGame, generateScoreCard }
+    // Camera FOV setter — driven by the settings slider. Clamped to a sane range
+    // so extreme values don't break the framing math (which assumes 65° baseline).
+    function setCameraFov(deg) {
+      // Clamped 50–80 — wider/narrower than this either crowds the framing
+      // (low) or makes projectiles enter too early on the sides (high).
+      const v = Math.max(50, Math.min(80, deg))
+      camera.fov = v
+      camera.updateProjectionMatrix()
+    }
+    function setPaused(p) { state.paused = !!p }
+    // React-side run-end listener — fires once when the game-over delay expires,
+    // carrying the recap payload. Used to persist scores to the leaderboard.
+    let onRunEnd = null
+
+    engineRef.current = { startGame, generateScoreCard, setCameraFov, setPaused }
+    engineRef.current.setRunEndListener = (fn) => { onRunEnd = fn }
 
     // Input
     const onKey = (e) => {
-      if (e.code === 'Space') { e.preventDefault(); drop() }
+      if (e.code === 'Escape') {
+        // ESC opens / closes the pause menu — only when a run is in progress
+        // (don't interfere with the start or game-over overlays).
+        if (state.gameActive || state.paused) {
+          e.preventDefault()
+          const next = !state.paused
+          state.paused = next
+          if (typeof onPauseChange === 'function') onPauseChange(next)
+        }
+        return
+      }
+      if (e.code === 'Space') {
+        if (state.paused) return
+        e.preventDefault(); drop()
+      }
     }
-    const onPointer = () => drop()
+    // Bridge the ESC key to React via a closure the component sets below.
+    let onPauseChange = null
+    engineRef.current.setPauseListener = (fn) => { onPauseChange = fn }
+    const onPointer = () => { if (!state.paused) drop() }
     document.addEventListener('keydown', onKey)
     canvas.addEventListener('pointerdown', onPointer)
 
@@ -1897,6 +1985,12 @@ export default function Game() {
     function animate() {
       if (cancelled) return
       raf = requestAnimationFrame(animate)
+      // While paused: keep rendering the current frame so the background looks
+      // alive behind the menu, but skip every gameplay update.
+      if (state.paused) {
+        renderer.render(scene, camera)
+        return
+      }
       state.frameN++
 
       // ── Worksite ambience: tape sway, bg crane drift, dust motes, worker head-tilt, spotlight follow ──
@@ -2064,11 +2158,8 @@ export default function Game() {
         //   warnBiasThresh — earlier line; pop the "STACK X!" warning so the player has
         //                    time to recover BEFORE the tower starts toppling.
         //   toppleBiasThresh — the actual line where bias starts pushing the tower over.
-        // avgDrift is over the recent-drift window, so a few left stacks recover.
-        const drifts = state.recentDrifts
-        const avgDrift = drifts.length
-          ? drifts.reduce((s, v) => s + v, 0) / drifts.length
-          : 0
+        // avgDrift is an EMA of recent relX values — one corrective stack visibly recovers.
+        const avgDrift = state.avgDrift
         const flrs = state.stackedPieces.length || 1
         // Smooth 0 → 1 ramp over the first ~70 floors. Continues to influence beyond
         // through the additive tier tightening below.
@@ -2121,10 +2212,7 @@ export default function Game() {
       // the meter reflects both failure modes. Color-flips at the WARNING threshold,
       // not the topple threshold, so the player gets visual lead time too.
       {
-        const drifts = state.recentDrifts
-        const avgDrift = drifts.length
-          ? drifts.reduce((s, v) => s + v, 0) / drifts.length
-          : 0
+        const avgDrift = state.avgDrift
         const leanContrib = state.towerLeanX / 10
         const biasContrib = avgDrift / 3
         const leanNorm = Math.max(0, Math.min(1, 0.5 + leanContrib + biasContrib))
@@ -2292,18 +2380,39 @@ export default function Game() {
         }
       }
 
-      // Camera — follow the action: stay close, rise with the tower
-      const focusY = state.swingHeight > 0
-        ? state.swingHeight - 3
-        : state.towerHeight + 2
-      const camYTarget = Math.max(4, focusY)
+      // Camera — adaptive framing.
+      //   Y: trails BELOW the swinging piece so the dropper sits in the upper
+      //      portion of the frame. Early on the camera rides lower (showing more
+      //      of the base + construction site); as the tower grows it tracks the
+      //      swing tightly so the player isn't looking at empty space.
+      //   Z: scales with swing amp (wider arcs need more room) AND with viewport
+      //      aspect (narrower screens pull camera back further). Prevents the
+      //      swinging piece from exiting the frame on portrait / split-view layouts.
+      //   LookAt: always aimed at the swing area so the dropper stays in view.
       // Perfect-drop dolly: punch in then ease out.
       if (state.camDolly > 0) {
         state.camDolly *= 0.88
         if (state.camDolly < 0.01) state.camDolly = 0
       }
-      const camZTarget = 24 - state.camDolly * 6
+      const ampRoom = state.swingAmp * 0.6      // wider swing → further back
+      const heightRoom = Math.min(1, state.stackedPieces.length / 70) * 4
+      const baseZ = 22 + ampRoom + heightRoom
+      // FOV compensation: changing FOV is a "lens character" choice, NOT a
+      // difficulty knob. Pull the camera back at low FOV / push in at high FOV
+      // so the visible world width at the tower stays ~constant. 65° = 1.0.
+      const fovScale = Math.tan((65 * Math.PI / 180) / 2) /
+                       Math.tan((camera.fov * Math.PI / 180) / 2)
+      const camZTarget = baseZ * state.aspectScale * fovScale - state.camDolly * 6
       const camLerp = state.camDolly > 0.05 ? 0.18 : 0.08
+      // Camera Y lead — how far below the swinging piece the camera sits.
+      // Early game: bigger lead (camera lower) so foundation + props stay framed.
+      // Tall game: smaller lead so the dropper doesn't drift to the top edge.
+      const yLeadBlend = Math.min(1, state.stackedPieces.length / 40)
+      const yLead = 7 - yLeadBlend * 4   // 7 early → 3 by floor 40
+      const focusY = state.swingHeight > 0
+        ? state.swingHeight - yLead
+        : state.towerHeight + 2
+      const camYTarget = Math.max(4, focusY)
       camera.position.y += (camYTarget - camera.position.y) * 0.08
       camera.position.z += (camZTarget - camera.position.z) * camLerp
       const lookAt = state.swingHeight > 0
@@ -2345,11 +2454,19 @@ export default function Game() {
       if (state.gameOverDelay > 0) {
         state.gameOverDelay--
         if (state.gameOverDelay === 0) {
-          if (finalScoreRef.current) finalScoreRef.current.textContent = state.score
-          if (finalHeightRef.current) finalHeightRef.current.textContent = state.stackedPieces.length
-          if (finalPerfectRef.current) finalPerfectRef.current.textContent = state.perfectCount
-          if (finalComboRef.current) finalComboRef.current.textContent = state.maxCombo + '×'
-          if (finalTierRef.current) finalTierRef.current.textContent = state.tierReached
+          // Push the recap into React state — at this point the game-over JSX
+          // hasn't mounted yet, so refs would be null. State works because the
+          // values render with the screen on the very next reconcile pass.
+          const r = {
+            score: state.score,
+            floors: state.stackedPieces.length,
+            perfects: state.perfectCount,
+            maxCombo: state.maxCombo,
+            tier: state.tierReached,
+            foundation: state.foundation || 'standard',
+          }
+          setRecap(r)
+          if (typeof onRunEnd === 'function') onRunEnd(r)
           setShowGameOver(true)
         }
       }
@@ -2370,10 +2487,89 @@ export default function Game() {
   }, [])
 
   const handleStart = () => {
+    if (!player) return  // form is gating the Play button; this is a safety net
+    setShowPause(false)
+    setShowSettings(false)
     engineRef.current?.startGame(foundation)
   }
   const handleSaveCard = () => {
     engineRef.current?.generateScoreCard()
+  }
+  const handleResume = () => {
+    setShowPause(false)
+    setShowSettings(false)
+    engineRef.current?.setPaused(false)
+  }
+  const handleReset = () => {
+    setShowPause(false)
+    setShowSettings(false)
+    engineRef.current?.setPaused(false)
+    engineRef.current?.startGame(foundation)
+  }
+  const handleQuit = () => {
+    setShowPause(false)
+    setShowSettings(false)
+    setShowGameOver(false)
+    engineRef.current?.setPaused(false)
+    setShowStart(true)
+  }
+
+  // Bridge: ESC handler inside the engine flips state.paused — mirror it into React.
+  useEffect(() => {
+    const eng = engineRef.current
+    if (!eng?.setPauseListener) return
+    eng.setPauseListener((paused) => {
+      setShowPause(paused)
+      if (!paused) setShowSettings(false)
+    })
+    return () => eng.setPauseListener?.(null)
+  }, [])
+
+  // Apply FOV slider changes to the live camera.
+  useEffect(() => {
+    engineRef.current?.setCameraFov?.(fov)
+  }, [fov])
+
+  // Persist the active player so they don't have to re-enter on every run.
+  useEffect(() => {
+    try {
+      if (player) localStorage.setItem('radian_player', JSON.stringify(player))
+      else localStorage.removeItem('radian_player')
+    } catch { /* noop */ }
+  }, [player])
+
+  // When a run ends, push the score + player profile into the leaderboard.
+  // Local write is synchronous; backend POST is fire-and-forget. Profile is
+  // read from a ref so the run-end callback always sees the current value.
+  const playerRef = useRef(player)
+  useEffect(() => { playerRef.current = player }, [player])
+  useEffect(() => {
+    const eng = engineRef.current
+    if (!eng?.setRunEndListener) return
+    eng.setRunEndListener((r) => {
+      if (!r || r.score <= 0) return
+      const p = playerRef.current || {}
+      const entry = {
+        ...r,
+        name: (p.name || 'ANON').trim() || 'ANON',
+        email: (p.email || '').trim(),
+        phone: (p.phone || '').trim(),
+      }
+      const { id } = addLocalScore(entry)
+      setLastEntryId(id)
+      // Best-effort sync — failure is silent.
+      submitOnline(entry)
+    })
+    return () => eng.setRunEndListener?.(null)
+  }, [])
+
+  const handleNewUser = () => {
+    setPlayer(null)
+    setShowGameOver(false)
+    setShowPause(false)
+    setShowLeaderboard(false)
+    engineRef.current?.setPaused(false)
+    setShowStart(true)
   }
 
   return (
@@ -2423,24 +2619,78 @@ export default function Game() {
           <div className="screen-title">Tower<br /><span className="yl">Stacker</span></div>
           <div className="screen-sub">Stack the scaffold · Beat the wobble · Build the skyline</div>
 
-          <div className="foundation-picker">
-            <div className="foundation-label">Choose your foundation</div>
-            <div className="foundation-row">
-              {Object.entries(FOUNDATIONS).map(([key, fnd]) => (
-                <button
-                  key={key}
-                  className={'foundation-btn' + (foundation === key ? ' selected' : '')}
-                  onClick={() => setFoundation(key)}
-                >
-                  <div className="foundation-name">{fnd.label}</div>
-                  <div className="foundation-sub">{fnd.sub}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <button className="big-btn" onClick={handleStart}>Play</button>
+          {!player ? (
+            <PlayerForm onSubmit={(p) => setPlayer(p)} />
+          ) : (
+            <>
+              <div className="player-greeting">
+                Welcome, <span className="yl">{player.name}</span>
+                <button className="link-btn" onClick={() => setPlayer(null)}>Not you?</button>
+              </div>
+              <div className="foundation-picker">
+                <div className="foundation-label">Choose your foundation</div>
+                <div className="foundation-row">
+                  {Object.entries(FOUNDATIONS).map(([key, fnd]) => (
+                    <button
+                      key={key}
+                      className={'foundation-btn' + (foundation === key ? ' selected' : '')}
+                      onClick={() => setFoundation(key)}
+                    >
+                      <div className="foundation-name">{fnd.label}</div>
+                      <div className="foundation-sub">{fnd.sub}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="start-actions">
+                <button className="big-btn" onClick={handleStart}>Play</button>
+                <button className="big-btn secondary" onClick={() => setShowLeaderboard(true)}>Leaderboard</button>
+              </div>
+            </>
+          )}
           <div className="brand-footer">A Radian Scaffolding experience</div>
+        </div>
+      )}
+      {showPause && (
+        <div className="screen" id="pause-screen">
+          <div className="brand-block small">
+            <img className="brand-logo" src="/logo.png" alt="Radian" />
+            <div className="brand-wordmark">RADIAN</div>
+          </div>
+          <div className="screen-title">{showSettings ? <>Set<span className="yl">tings</span></> : <>Pa<span className="yl">used</span></>}</div>
+          {!showSettings && (
+            <div className="pause-actions">
+              <button className="big-btn" onClick={handleResume}>Resume</button>
+              <button className="big-btn secondary" onClick={() => setShowSettings(true)}>Settings</button>
+              <button className="big-btn secondary" onClick={handleReset}>Reset Run</button>
+              <button className="big-btn secondary" onClick={handleQuit}>Quit to Menu</button>
+            </div>
+          )}
+          {showSettings && (
+            <div className="settings-panel">
+              <div className="setting-row">
+                <label className="setting-label" htmlFor="fov-slider">
+                  Field of View
+                  <span className="setting-value">{fov}°</span>
+                </label>
+                <input
+                  id="fov-slider"
+                  type="range"
+                  min="50"
+                  max="80"
+                  step="1"
+                  value={fov}
+                  onChange={(e) => setFov(parseInt(e.target.value, 10))}
+                />
+                <div className="setting-hint">Lens character only — framing stays consistent across the range</div>
+              </div>
+              <div className="settings-actions">
+                <button className="big-btn secondary" onClick={() => setFov(65)}>Reset Default</button>
+                <button className="big-btn" onClick={() => setShowSettings(false)}>Back</button>
+              </div>
+            </div>
+          )}
+          <div className="screen-sub">ESC to {showSettings ? 'go back' : 'resume'}</div>
         </div>
       )}
       {showGameOver && (
@@ -2450,35 +2700,240 @@ export default function Game() {
             <div className="brand-wordmark">RADIAN</div>
           </div>
           <div className="screen-title">Tower<br /><span className="yl">Toppled!</span></div>
-          <div id="final-score-num" ref={finalScoreRef}>0</div>
+          <div id="final-score-num">{recap.score}</div>
           <div className="screen-sub">Final Score</div>
           <div className="recap">
             <div className="stat">
-              <div className="stat-num" ref={finalHeightRef}>0</div>
+              <div className="stat-num">{recap.floors}</div>
               <div className="stat-lbl">Floors Built</div>
             </div>
             <div className="stat">
-              <div className="stat-num gold" ref={finalPerfectRef}>0</div>
+              <div className="stat-num gold">{recap.perfects}</div>
               <div className="stat-lbl">★ Perfects</div>
             </div>
             <div className="stat">
-              <div className="stat-num pink" ref={finalComboRef}>0×</div>
+              <div className="stat-num pink">{recap.maxCombo}×</div>
               <div className="stat-lbl">Best Combo</div>
             </div>
             <div className="stat">
-              <div className="stat-num cyan" ref={finalTierRef}>0</div>
+              <div className="stat-num cyan">{recap.tier}</div>
               <div className="stat-lbl">Tier Reached</div>
             </div>
           </div>
+          {player && (
+            <div className="player-greeting small">
+              Saved as <span className="yl">{player.name}</span>
+            </div>
+          )}
           <div className="gameover-actions">
             <button className="big-btn" onClick={handleStart}>Build Again</button>
+            <button className="big-btn secondary" onClick={() => setShowLeaderboard(true)}>Leaderboard</button>
             <button className="big-btn secondary" onClick={handleSaveCard}>Save Score Card</button>
+            <button className="big-btn secondary" onClick={handleNewUser}>New User</button>
           </div>
           <div className="brand-footer">
             Want a real tower that stays up? <span className="cta">Radian Scaffolding</span>
           </div>
         </div>
       )}
+
+      {showLeaderboard && (
+        <LeaderboardScreen
+          onClose={() => setShowLeaderboard(false)}
+          highlightId={lastEntryId}
+        />
+      )}
     </div>
+  )
+}
+
+// Leaderboard modal — pulls local + (best-effort) online entries and renders a
+// ranked table. Highlights the row matching `highlightId` so a player who just
+// finished a run can spot themselves.
+function LeaderboardScreen({ onClose, highlightId }) {
+  const [entries, setEntries] = useState(() => loadLocalLeaderboard())
+  const [online, setOnline] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    fetchMergedLeaderboard(50).then((res) => {
+      if (cancelled) return
+      setEntries(res.entries)
+      setOnline(res.online)
+      setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const [showClearPrompt, setShowClearPrompt] = useState(false)
+  const [clearCode, setClearCode] = useState('')
+  const [clearError, setClearError] = useState('')
+
+  const handleClear = () => {
+    // Passcode-gated to prevent a random booth visitor from wiping the board.
+    // Code is 00005 — written here in plain text because this is a kiosk app
+    // running on a trusted machine, not a security boundary.
+    if (clearCode !== '00005') {
+      setClearError('Incorrect passcode.')
+      return
+    }
+    clearLocalLeaderboard()
+    setEntries([])
+    setShowClearPrompt(false)
+    setClearCode('')
+    setClearError('')
+  }
+
+  return (
+    <div className="screen" id="leaderboard-screen">
+      <div className="brand-block small">
+        <img className="brand-logo" src="/logo.png" alt="Radian" />
+        <div className="brand-wordmark">RADIAN</div>
+      </div>
+      <div className="screen-title">Leader<span className="yl">board</span></div>
+      <div className="leaderboard-status">
+        {loading
+          ? 'Loading…'
+          : online
+            ? 'Showing local + online scores'
+            : 'Showing local scores only (offline)'}
+      </div>
+
+      <div className="leaderboard-table">
+        <div className="leaderboard-row leaderboard-head">
+          <div className="lb-rank">#</div>
+          <div className="lb-name">Player</div>
+          <div className="lb-score">Score</div>
+          <div className="lb-floors">Floors</div>
+          <div className="lb-foundation">Base</div>
+          <div className="lb-date">Date</div>
+        </div>
+        {entries.length === 0 && !loading && (
+          <div className="leaderboard-empty">No scores yet — be the first!</div>
+        )}
+        {entries.slice(0, 20).map((e, i) => (
+          <div
+            key={e.id || `${e.name}-${e.score}-${i}`}
+            className={'leaderboard-row' + (e.id === highlightId ? ' highlight' : '')}
+          >
+            <div className="lb-rank">{i + 1}</div>
+            <div className="lb-name">{e.name}</div>
+            <div className="lb-score">{e.score.toLocaleString()}</div>
+            <div className="lb-floors">{e.floors}</div>
+            <div className="lb-foundation">{FOUNDATION_LABEL[e.foundation] || e.foundation}</div>
+            <div className="lb-date">{formatDate(e.date)}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="leaderboard-actions">
+        <button className="big-btn" onClick={onClose}>Back</button>
+        {!showClearPrompt && (
+          <button
+            className="big-btn secondary"
+            onClick={() => { setShowClearPrompt(true); setClearError('') }}
+          >Clear Local</button>
+        )}
+      </div>
+
+      {showClearPrompt && (
+        <div className="clear-prompt">
+          <div className="clear-prompt-label">Enter admin passcode to clear local leaderboard</div>
+          <input
+            className="clear-prompt-input"
+            type="password"
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="•••••"
+            value={clearCode}
+            onChange={(e) => { setClearCode(e.target.value); setClearError('') }}
+            autoFocus
+          />
+          {clearError && <div className="clear-prompt-error">{clearError}</div>}
+          <div className="clear-prompt-actions">
+            <button className="big-btn" onClick={handleClear}>Confirm Clear</button>
+            <button
+              className="big-btn secondary"
+              onClick={() => { setShowClearPrompt(false); setClearCode(''); setClearError('') }}
+            >Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// First-time registration form. Required: name. Email and phone are also
+// required for booth lead capture but format-validated lightly so a fat-finger
+// doesn't lock the player out (we accept any @ + dot for email; any 7+ digits
+// for phone). On submit the parent persists the profile to localStorage.
+function PlayerForm({ onSubmit }) {
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [error, setError] = useState('')
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    const cleanName = name.trim()
+    const cleanEmail = email.trim()
+    const cleanPhone = phone.trim()
+    if (!cleanName) return setError('Please enter your name.')
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return setError('Please enter a valid email.')
+    const digits = cleanPhone.replace(/\D/g, '')
+    if (digits.length < 7) return setError('Please enter a valid phone number.')
+    setError('')
+    onSubmit({ name: cleanName.toUpperCase().slice(0, 20), email: cleanEmail, phone: cleanPhone })
+  }
+
+  return (
+    <form className="player-form" onSubmit={handleSubmit}>
+      <div className="player-form-title">Register to Play</div>
+      <div className="player-form-sub">We'll save your score under this profile</div>
+      <div className="player-form-row">
+        <label className="player-form-label" htmlFor="pf-name">Name</label>
+        <input
+          id="pf-name"
+          className="player-form-input"
+          type="text"
+          maxLength="20"
+          autoComplete="name"
+          placeholder="Your name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </div>
+      <div className="player-form-row">
+        <label className="player-form-label" htmlFor="pf-email">Email</label>
+        <input
+          id="pf-email"
+          className="player-form-input"
+          type="email"
+          autoComplete="email"
+          placeholder="you@company.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+      </div>
+      <div className="player-form-row">
+        <label className="player-form-label" htmlFor="pf-phone">Phone</label>
+        <input
+          id="pf-phone"
+          className="player-form-input"
+          type="tel"
+          autoComplete="tel"
+          placeholder="555-123-4567"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+        />
+      </div>
+      {error && <div className="player-form-error">{error}</div>}
+      <button className="big-btn" type="submit">Continue</button>
+      <div className="player-form-footer">
+        Your details stay with Radian Scaffolding for this conference.
+      </div>
+    </form>
   )
 }

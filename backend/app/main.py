@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from tortoise.contrib.fastapi import register_tortoise
 
 from app.config import TORTOISE_ORM
-from app.routers import homepage
+from app.routers import homepage, scores
 
 app = FastAPI(title="Portfolio API")
 
@@ -16,6 +16,7 @@ app.add_middleware(
 )
 
 app.include_router(homepage.router)
+app.include_router(scores.router)
 
 register_tortoise(
     app,

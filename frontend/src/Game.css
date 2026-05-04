@@ -612,3 +612,366 @@
   color: #00d4ff;
   text-shadow: 0 0 18px #00ffff;
 }
+
+/* Pause / settings overlay — shares .screen base for backdrop + centering. */
+.rts-root #pause-screen .pause-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 32px;
+  align-items: center;
+}
+.rts-root #pause-screen .pause-actions .big-btn {
+  margin-top: 0;
+  min-width: 280px;
+}
+.rts-root .settings-panel {
+  margin-top: 32px;
+  width: min(520px, 88vw);
+  background: rgba(40, 8, 70, 0.6);
+  border: 2px solid #7733cc;
+  border-radius: 18px;
+  padding: 28px 32px;
+  box-shadow: 0 0 40px #aa44ff44;
+}
+.rts-root .setting-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rts-root .setting-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 16px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #fff;
+  font-weight: 700;
+}
+.rts-root .setting-value {
+  color: #ffe94d;
+  font-size: 22px;
+  font-weight: 900;
+}
+.rts-root .setting-row input[type="range"] {
+  width: 100%;
+  height: 8px;
+  border-radius: 6px;
+  appearance: none;
+  background: linear-gradient(90deg, #4400aa, #ff44ff);
+  outline: none;
+  cursor: pointer;
+}
+.rts-root .setting-row input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffe94d;
+  border: 3px solid #fff;
+  box-shadow: 0 0 12px #ffe94d, 0 2px 0 #886600;
+  cursor: pointer;
+}
+.rts-root .setting-row input[type="range"]::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffe94d;
+  border: 3px solid #fff;
+  box-shadow: 0 0 12px #ffe94d;
+  cursor: pointer;
+}
+.rts-root .setting-hint {
+  font-size: 12px;
+  color: #aa88dd;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.rts-root .settings-actions {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  margin-top: 24px;
+  flex-wrap: wrap;
+}
+.rts-root .settings-actions .big-btn {
+  margin-top: 0;
+  padding: 12px 32px;
+  font-size: 16px;
+}
+
+/* Start screen — Play / Leaderboard side-by-side */
+.rts-root .start-actions {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.rts-root .start-actions .big-btn { margin-top: 36px; }
+
+/* Game-over name prompt */
+.rts-root .name-prompt {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.rts-root .name-prompt-label {
+  font-size: 13px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #aa88dd;
+}
+.rts-root .name-input {
+  width: min(320px, 80vw);
+  padding: 12px 18px;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  text-align: center;
+  text-transform: uppercase;
+  background: rgba(40, 8, 70, 0.7);
+  color: #ffe94d;
+  border: 2px solid #7733cc;
+  border-radius: 12px;
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.rts-root .name-input:focus {
+  border-color: #ff44ff;
+  box-shadow: 0 0 24px #ff44ff66;
+}
+
+/* Leaderboard modal */
+.rts-root #leaderboard-screen { padding: 32px 16px; overflow-y: auto; }
+.rts-root .leaderboard-status {
+  font-size: 13px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #aa88dd;
+  margin-top: 12px;
+}
+.rts-root .leaderboard-table {
+  margin-top: 24px;
+  width: min(720px, 94vw);
+  background: rgba(40, 8, 70, 0.55);
+  border: 2px solid #7733cc;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 0 30px #aa44ff33;
+}
+.rts-root .leaderboard-row {
+  display: grid;
+  grid-template-columns: 50px 1.6fr 1fr 0.7fr 0.9fr 0.9fr;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  font-size: 15px;
+  color: #fff;
+  border-bottom: 1px solid rgba(119, 51, 204, 0.4);
+}
+.rts-root .leaderboard-row:last-child { border-bottom: none; }
+.rts-root .leaderboard-row.leaderboard-head {
+  background: rgba(255, 68, 255, 0.18);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #ffd5ff;
+  font-weight: 900;
+}
+.rts-root .leaderboard-row.highlight {
+  background: linear-gradient(90deg, rgba(255, 233, 77, 0.2), rgba(255, 68, 255, 0.15));
+  box-shadow: inset 0 0 20px rgba(255, 233, 77, 0.25);
+}
+.rts-root .leaderboard-row.highlight .lb-name { color: #ffe94d; font-weight: 900; }
+.rts-root .lb-rank { color: #ffe94d; font-weight: 900; }
+.rts-root .lb-name { font-weight: 700; letter-spacing: 1px; }
+.rts-root .lb-score { color: #ffe94d; font-weight: 900; }
+.rts-root .lb-floors, .rts-root .lb-foundation, .rts-root .lb-date {
+  color: #aa88dd;
+  font-size: 13px;
+}
+.rts-root .leaderboard-empty {
+  padding: 32px;
+  text-align: center;
+  color: #aa88dd;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.rts-root .leaderboard-actions {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  margin-top: 28px;
+  flex-wrap: wrap;
+}
+.rts-root .leaderboard-actions .big-btn { margin-top: 0; }
+@media (max-width: 600px) {
+  .rts-root .leaderboard-row {
+    grid-template-columns: 36px 1.4fr 1fr 0.6fr;
+    font-size: 13px;
+  }
+  .rts-root .lb-foundation, .rts-root .lb-date { display: none; }
+}
+
+/* Player registration form (start screen) */
+.rts-root .player-form {
+  margin-top: 28px;
+  width: min(440px, 92vw);
+  background: rgba(40, 8, 70, 0.6);
+  border: 2px solid #7733cc;
+  border-radius: 18px;
+  padding: 24px 28px 20px;
+  box-shadow: 0 0 40px #aa44ff44;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: stretch;
+}
+.rts-root .player-form-title {
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #fff;
+  text-align: center;
+}
+.rts-root .player-form-sub {
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #aa88dd;
+  text-align: center;
+  margin-top: -6px;
+  margin-bottom: 4px;
+}
+.rts-root .player-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rts-root .player-form-label {
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #aa88dd;
+  font-weight: 700;
+}
+.rts-root .player-form-input {
+  padding: 12px 16px;
+  font-size: 16px;
+  background: rgba(20, 4, 40, 0.7);
+  color: #fff;
+  border: 2px solid #5522aa;
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.rts-root .player-form-input:focus {
+  border-color: #ff44ff;
+  box-shadow: 0 0 18px #ff44ff55;
+}
+.rts-root .player-form-error {
+  color: #ff5577;
+  font-size: 13px;
+  letter-spacing: 1px;
+  text-align: center;
+  margin-top: -4px;
+}
+.rts-root .player-form .big-btn {
+  margin-top: 8px;
+  align-self: center;
+}
+.rts-root .player-form-footer {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #8866bb;
+  text-align: center;
+  margin-top: 4px;
+}
+
+/* Returning-player greeting */
+.rts-root .player-greeting {
+  margin-top: 18px;
+  font-size: 18px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.rts-root .player-greeting.small {
+  font-size: 14px;
+  margin-top: 12px;
+}
+.rts-root .player-greeting .yl { color: #ffe94d; font-weight: 900; }
+.rts-root .link-btn {
+  background: none;
+  border: none;
+  color: #ff66ff;
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  text-decoration: underline;
+}
+.rts-root .link-btn:hover { color: #ffaaff; background: rgba(255, 102, 255, 0.1); }
+
+/* Admin passcode prompt for clearing the leaderboard */
+.rts-root .clear-prompt {
+  margin-top: 24px;
+  width: min(360px, 90vw);
+  background: rgba(60, 0, 30, 0.7);
+  border: 2px solid #ff5577;
+  border-radius: 14px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+.rts-root .clear-prompt-label {
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #ffaacc;
+  text-align: center;
+}
+.rts-root .clear-prompt-input {
+  padding: 14px 16px;
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 8px;
+  text-align: center;
+  background: rgba(20, 0, 10, 0.8);
+  color: #ffe94d;
+  border: 2px solid #ff5577;
+  border-radius: 10px;
+  outline: none;
+}
+.rts-root .clear-prompt-input:focus {
+  box-shadow: 0 0 20px #ff557766;
+}
+.rts-root .clear-prompt-error {
+  color: #ff7799;
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-align: center;
+}
+.rts-root .clear-prompt-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.rts-root .clear-prompt-actions .big-btn {
+  margin-top: 4px;
+  padding: 10px 24px;
+  font-size: 14px;
+}
