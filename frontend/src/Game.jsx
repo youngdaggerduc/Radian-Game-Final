@@ -2063,7 +2063,24 @@ export default function Game() {
         } else {
           state.swingAngle += state.swingSpeed
         }
-        const sx = Math.sin(state.swingAngle) * state.swingAmp + state.wind.offset
+        let sx = Math.sin(state.swingAngle) * state.swingAmp + state.wind.offset
+        // Keep the swinging piece on-screen — wider pieces (WIDE buff, checkpoint
+        // boost) plus a strong wind gust can otherwise push the visible edge past
+        // the viewport on narrow viewports. Project the piece's Y/Z to NDC and
+        // clamp sx so the piece's X footprint stays within ~94% of visible width.
+        const halfW = state.currentPiece.userData.pw * 0.5
+        const _vCenter = new THREE.Vector3(0, state.swingHeight, 0).project(camera)
+        const _vEdge = new THREE.Vector3(1, state.swingHeight, 0).project(camera)
+        const ndcPerWorldX = _vEdge.x - _vCenter.x
+        if (Math.abs(ndcPerWorldX) > 1e-5) {
+          const margin = 0.94
+          const maxRight = (margin - _vCenter.x) / ndcPerWorldX - halfW
+          const maxLeft = (-margin - _vCenter.x) / ndcPerWorldX + halfW
+          if (maxRight > maxLeft) {
+            if (sx > maxRight) sx = maxRight
+            else if (sx < maxLeft) sx = maxLeft
+          }
+        }
         state.currentPiece.position.set(sx, state.swingHeight, 0)
         state.currentPiece.rotation.z = Math.sin(state.swingAngle) * 0.22
         state.currentPiece.rotation.y = state.frameN * 0.01
