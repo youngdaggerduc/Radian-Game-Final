@@ -124,13 +124,14 @@ export default function Game() {
 
     // Aspect-aware framing: pull the camera back on narrow / portrait viewports so
     // the swing arc and tower base stay on screen. aspectScale is 1.0 at 16:9,
-    // grows up to 1.6 as the viewport gets narrower than that, and never shrinks
-    // below 0.9 (ultrawide). Read by the animate loop's camZTarget.
+    // grows as the viewport gets narrower, and never shrinks below 0.9 (ultrawide).
+    // Cap raised to 3.2 to support tall vertical kiosk monitors (e.g. 9:32).
+    // Read by the animate loop's camZTarget.
     const computeAspectScale = (w, h) => {
       const a = w / h
       const ref = 16 / 9
       // Below ref → narrower → larger scale (further back).
-      return Math.max(0.9, Math.min(1.6, ref / a))
+      return Math.max(0.9, Math.min(3.2, ref / a))
     }
     const onResize = () => {
       W = window.innerWidth
@@ -1070,6 +1071,9 @@ export default function Game() {
       towerLeanX: 0,
       towerVelocity: 0,
       towerAngle: 0,
+      // Passive ambient sway — kicks in past floor 5, grows with height/tier so
+      // tall towers feel alive and unstable even when the player is stacking clean.
+      swayPhase: 0,
       // Exponential moving average of recent per-piece offsets (relX = lx - prevX).
       // Tracks "directional bias of recent stacking" — positive = drifting right,
       // negative = drifting left. EMA (α=0.3) means one corrective stack visibly
@@ -1775,6 +1779,7 @@ export default function Game() {
       state.towerLeanX = 0
       state.towerVelocity = 0
       state.towerAngle = 0
+      state.swayPhase = 0
       state.avgDrift = 0
       state.biasWarnCooldown = 0
       state.tier = 0
@@ -1976,9 +1981,18 @@ export default function Game() {
     // Bridge the ESC key to React via a closure the component sets below.
     let onPauseChange = null
     engineRef.current.setPauseListener = (fn) => { onPauseChange = fn }
-    const onPointer = () => { if (!state.paused) drop() }
+    const onPointer = (e) => {
+      if (state.paused) return
+      // Touch + mouse both surface as pointerdown. preventDefault stops the
+      // synthetic mousedown/click that follows on touch — otherwise a tap can
+      // double-fire drop() or steal focus from the start/game-over overlays.
+      if (e && typeof e.preventDefault === 'function') e.preventDefault()
+      drop()
+    }
+    const onContextMenu = (e) => e.preventDefault()
     document.addEventListener('keydown', onKey)
     canvas.addEventListener('pointerdown', onPointer)
+    canvas.addEventListener('contextmenu', onContextMenu)
 
     // Main loop
     let raf = 0
@@ -2167,6 +2181,18 @@ export default function Game() {
         state.towerVelocity += state.towerLeanX * (0.008 + tier * 0.003) * hFactor
         state.towerVelocity -= state.towerAngle * (0.0035 - Math.min(0.0025, tier * 0.0008)) // strong restoring at low tiers, weakens with height
         state.towerVelocity *= 0.965
+        // Passive ambient sway — silent below floor 5, then ramps with floors and tier.
+        // Two sine components at incommensurate frequencies so it doesn't feel like a
+        // metronome. Force is small per-frame; the existing restoring spring keeps it
+        // bounded but lets the angle visibly drift left/right under it.
+        const flrsForSway = state.stackedPieces.length
+        if (flrsForSway > 5) {
+          const swayRamp = Math.min(1, (flrsForSway - 5) / 60)
+          state.swayPhase += 0.016 + swayRamp * 0.010
+          const swayAmp = swayRamp * (0.018 + tier * 0.012)
+          state.towerVelocity += Math.sin(state.swayPhase) * swayAmp
+          state.towerVelocity += Math.sin(state.swayPhase * 0.43 + 1.7) * swayAmp * 0.45
+        }
         // Windowed cumulative-bias pressure with smooth height scaling.
         //   At low towers, balance barely matters (huge tolerance, weak push) so early
         //   pieces feel forgiving and arcade-y.
@@ -2424,10 +2450,17 @@ export default function Game() {
       // FOV compensation so slider doesn't change perceived framing width.
       const fovScale = Math.tan((65 * Math.PI / 180) / 2) /
                        Math.tan((camera.fov * Math.PI / 180) / 2)
-      const camZTarget = ISO_DZ * state.aspectScale * fovScale - state.camDolly * 4
-      // LookAt sits a few units below the swinger so stacked floors stay framed.
+      // Portrait kiosk mode: when viewport is taller than wide, the perspective
+      // camera's vertical FOV gives us "free" vertical space, so we don't need
+      // to pull back as far horizontally. Soften the aspect pullback and drop
+      // the lookAt so more of the stacked tower stays in frame below the swinger.
+      const portraitT = Math.max(0, Math.min(1, (window.innerHeight / window.innerWidth - 1) / 1.5))
+      const camZTarget = ISO_DZ * (state.aspectScale * (1 - portraitT * 0.45)) * fovScale - state.camDolly * 4
+      // LookAt sits below the swinger so stacked floors stay framed; in portrait,
+      // drop it further to take advantage of the extra vertical pixels.
+      const lookAtDrop = 4 + portraitT * 8
       const lookAtTarget = state.swingHeight > 0
-        ? state.swingHeight - 4
+        ? state.swingHeight - lookAtDrop
         : state.towerHeight + 2
       // Smooth Y tracking; lerp toward (lookAt + ISO_DY).
       const camYTarget = Math.max(ISO_DY, lookAtTarget + ISO_DY)
@@ -2499,6 +2532,7 @@ export default function Game() {
       window.removeEventListener('resize', onResize)
       document.removeEventListener('keydown', onKey)
       canvas.removeEventListener('pointerdown', onPointer)
+      canvas.removeEventListener('contextmenu', onContextMenu)
       renderer.dispose()
       engineRef.current = null
     }

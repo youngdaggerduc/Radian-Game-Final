@@ -10,4 +10,12 @@ html, body, #root {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Touchscreen kiosk: disable browser gestures (pinch-zoom, scroll bounce,
+     double-tap zoom, pull-to-refresh, long-press callouts). */
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }

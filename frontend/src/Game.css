@@ -11,6 +11,7 @@
   display: block;
   position: fixed;
   inset: 0;
+  touch-action: none;
 }
 
 /* HUD */
@@ -974,4 +975,44 @@
   margin-top: 4px;
   padding: 10px 24px;
   font-size: 14px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Portrait / vertical kiosk mode
+   Tall-narrow monitor (e.g. 1080×3840) — bump HUD typography up so it's
+   readable from a few feet away, stack score/balance at top/bottom along
+   the long axis, and give buttons real touch hit-targets.
+   ───────────────────────────────────────────────────────────────────────── */
+@media (orientation: portrait) {
+  .rts-root #score { font-size: 96px; }
+  .rts-root .game-title { font-size: 22px; }
+  .rts-root #height-num { font-size: 40px; }
+  .rts-root #height-badge { padding: 14px 20px; }
+  .rts-root #balance-wrap { width: 280px; bottom: 110px; }
+  .rts-root #balance-track { width: 280px; height: 14px; }
+  .rts-root #balance-needle { width: 6px; height: 24px; }
+  .rts-root #hint { bottom: 44px; font-size: 16px; }
+  .rts-root .key { font-size: 16px; padding: 5px 16px; }
+  .rts-root #brand-mark { bottom: 24px; right: 24px; padding: 12px 18px 12px 14px; }
+  .rts-root #brand-mark img { width: 44px; height: 44px; }
+  .rts-root #brand-mark .brand-name { font-size: 20px; }
+  .rts-root #brand-mark .brand-sub { font-size: 11px; }
+  /* Touch targets: minimum 56px tall so finger taps are comfortable. */
+  .rts-root .big-btn { min-height: 56px; padding: 16px 36px; font-size: 18px; }
+  .rts-root .foundation-card { min-height: 140px; }
+  .rts-root .player-form-input { min-height: 52px; font-size: 18px; }
+}
+
+/* Extreme tall portrait (≥ 2:1) — true vertical kiosk. Push start/game-over
+   overlays into a centered narrow column so content isn't lost in the
+   vertical letterboxing, and use even bigger HUD type for far-viewing. */
+@media (min-aspect-ratio: 1/2) and (orientation: portrait) {}
+@media (max-aspect-ratio: 1/2) {
+  .rts-root #score { font-size: 120px; }
+  .rts-root #height-num { font-size: 52px; }
+  .rts-root #balance-wrap { bottom: 160px; width: 340px; }
+  .rts-root #balance-track { width: 340px; height: 16px; }
+  .rts-root #hint { bottom: 64px; font-size: 18px; }
+  .rts-root .screen { padding: 8vh 6vw; justify-content: center; }
+  .rts-root .game-over-title, .rts-root .start-title { font-size: clamp(36px, 6vw, 72px); }
 }
