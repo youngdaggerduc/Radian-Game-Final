@@ -79,6 +79,12 @@ export default function Game() {
   const [showLeaderboard, setShowLeaderboard] = useState(false)
   const [foundation, setFoundation] = useState('standard')
   const [fov, setFov] = useState(65)
+  // FPS counter — off by default; togglable in Settings. Persisted so booth
+  // operators don't have to re-enable it per session.
+  const [showFps, setShowFps] = useState(() => {
+    try { return localStorage.getItem('radian_show_fps') === '1' } catch { return false }
+  })
+  const fpsRef = useRef(null)
   // Recap is set once when the game-over delay completes — using state so the
   // values are present at the time the game-over JSX mounts (refs were null
   // because the divs hadn't rendered yet, leaving the recap stuck at zeros).
@@ -148,7 +154,10 @@ export default function Game() {
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.6)
     keyLight.position.set(12, 35, 22)
     keyLight.castShadow = true
-    keyLight.shadow.mapSize.set(2048, 2048)
+    // 1024 is plenty for a single directional caster at this scene scale and
+    // saves ~75% of the shadow-pass fill cost vs 2048 with no perceptible
+    // difference at the fixed isometric framing.
+    keyLight.shadow.mapSize.set(1024, 1024)
     Object.assign(keyLight.shadow.camera, {
       near: 0.5, far: 120, left: -25, right: 25, top: 80, bottom: -10,
     })
@@ -163,12 +172,21 @@ export default function Game() {
     // Helpers
     const rc = () => COLORS[Math.floor(Math.random() * COLORS.length)]
     const toonMat = (color, opts = {}) => new THREE.MeshLambertMaterial({ color, ...opts })
+    // Single shared outline material — the back-side dark mesh shows up on every
+    // box/cyl/cone/sphere in the scene (worksite props + every stacked tower
+    // floor). Sharing the material kills per-mesh allocation and lets the
+    // renderer batch state changes; sharing the geometry (no clone) drops the
+    // GPU memory cost per outline to nothing. The outline is local-static, so
+    // we lock its matrix after the initial scale to skip per-frame
+    // updateMatrix() calls on potentially thousands of children.
+    const outlineMat = new THREE.MeshBasicMaterial({ color: 0x110022, side: THREE.BackSide })
     const outline = (mesh, s = 1.07) => {
-      const m = new THREE.Mesh(
-        mesh.geometry.clone(),
-        new THREE.MeshBasicMaterial({ color: 0x110022, side: THREE.BackSide })
-      )
+      const m = new THREE.Mesh(mesh.geometry, outlineMat)
       m.scale.setScalar(s)
+      m.castShadow = false
+      m.receiveShadow = false
+      m.matrixAutoUpdate = false
+      m.updateMatrix()
       mesh.add(m)
     }
     const box = (w, h, d, col) => {
@@ -391,6 +409,21 @@ export default function Game() {
       g.userData.pw = pw
       g.userData.ph = ph
       g.userData.pd = pd
+      // Compute the actual visual bounding box once at construction time so the
+      // projectile hit test can target the piece's TRUE visual center, not
+      // piece.position.y (which is the geometry origin and varies per piece).
+      // This is the fix for projectiles "phasing through" — previously the hit
+      // window was anchored at the geometry origin (often the piece's bottom),
+      // so half the visible piece sat outside the test region. We sample the
+      // bbox with the piece at identity transform; world placement adds the
+      // group transform on top via the local-frame test.
+      const _bbox = new THREE.Box3().setFromObject(g)
+      const _cy = (_bbox.min.y + _bbox.max.y) * 0.5
+      const _cx = (_bbox.min.x + _bbox.max.x) * 0.5
+      g.userData.localCenterX = isFinite(_cx) ? _cx : 0
+      g.userData.localCenterY = isFinite(_cy) ? _cy : ph * 0.5
+      g.userData.localHalfX = isFinite(_bbox.max.x) ? Math.max(pw * 0.5, (_bbox.max.x - _bbox.min.x) * 0.5) : pw * 0.5
+      g.userData.localHalfY = isFinite(_bbox.max.y) ? Math.max(ph * 0.5, (_bbox.max.y - _bbox.min.y) * 0.5) : ph * 0.5
       return g
     }
 
@@ -586,6 +619,247 @@ export default function Game() {
       return g
     }
 
+    // ── More themed jobsite props ──
+
+    // Cement mixer with a slowly rotating drum (drum stored in userData for the animate loop).
+    function makeCementMixer() {
+      const g = new THREE.Group()
+      // Wheeled chassis
+      const chassis = box(1.6, 0.18, 0.9, 0xffe94d); chassis.position.y = 0.45; g.add(chassis)
+      for (const x of [-0.55, 0.55]) {
+        const wL = cyl(0.22, 0.22, 0.14, 10, 0x111111)
+        wL.rotation.z = Math.PI / 2; wL.position.set(x, 0.22, -0.5); g.add(wL)
+        const wR = cyl(0.22, 0.22, 0.14, 10, 0x111111)
+        wR.rotation.z = Math.PI / 2; wR.position.set(x, 0.22, 0.5); g.add(wR)
+      }
+      // Yoke that holds the drum
+      const yokeL = box(0.12, 0.6, 0.12, 0xcccccc); yokeL.position.set(-0.4, 0.95, 0); g.add(yokeL)
+      const yokeR = box(0.12, 0.6, 0.12, 0xcccccc); yokeR.position.set( 0.4, 0.95, 0); g.add(yokeR)
+      // Drum — a fattened cylinder tilted forward; rotates around its length axis
+      const drumPivot = new THREE.Group()
+      drumPivot.position.set(0, 1.20, 0)
+      drumPivot.rotation.z = -Math.PI / 7 // tipped pour-side down
+      g.add(drumPivot)
+      const drum = cyl(0.55, 0.45, 1.0, 14, 0xff7711)
+      drum.rotation.z = Math.PI / 2 // length along world X (after pivot tilt)
+      drumPivot.add(drum)
+      const drumBand = cyl(0.58, 0.58, 0.14, 14, 0x1a0a44)
+      drumBand.rotation.z = Math.PI / 2; drumBand.position.x = 0
+      drumPivot.add(drumBand)
+      // Pour chute
+      const chute = box(0.5, 0.10, 0.34, 0xcccccc); chute.position.set(0.7, 1.05, 0); chute.rotation.z = -0.4
+      g.add(chute)
+      // Handle
+      const handle = cyl(0.04, 0.04, 1.4, 4, 0x553311)
+      handle.rotation.z = Math.PI / 2; handle.position.set(-1.1, 0.8, 0); g.add(handle)
+      g.userData.drum = drumPivot
+      return g
+    }
+
+    // Site office shipping container — boxy, branded panel, doors painted on.
+    function makeSiteOffice() {
+      const g = new THREE.Group()
+      // Shell
+      const shell = box(4.6, 2.4, 2.2, 0x2266aa); shell.position.y = 1.2; g.add(shell)
+      // Roof cap (slightly darker)
+      const roof = box(4.7, 0.10, 2.3, 0x1a4a88); roof.position.y = 2.42; g.add(roof)
+      // Corner ribs (vertical) — gives it the container vibe
+      for (const [x, z] of [[-2.25, 1.1], [2.25, 1.1], [-2.25, -1.1], [2.25, -1.1]]) {
+        const rib = box(0.10, 2.40, 0.10, 0x114488); rib.position.set(x, 1.2, z); g.add(rib)
+      }
+      // Horizontal corrugation lines on long sides — fake with thin strips
+      for (let i = -3; i <= 3; i++) {
+        const stripF = box(4.6, 0.04, 0.02, 0x1a4a88)
+        stripF.position.set(0, 1.2 + i * 0.30, 1.105); g.add(stripF)
+        const stripB = stripF.clone(); stripB.position.z = -1.105; g.add(stripB)
+      }
+      // Door (front, right side)
+      const door = box(0.85, 1.6, 0.04, 0x1a3366); door.position.set(1.4, 0.85, 1.12); g.add(door)
+      const knob = sphere(0.05, 0xffe94d); knob.position.set(1.7, 0.85, 1.16); g.add(knob)
+      // Window (front, left side)
+      const win = box(0.9, 0.55, 0.04, 0x88ddff); win.position.set(-1.0, 1.5, 1.12); g.add(win)
+      // RADIAN branded panel on the long side (back face)
+      const sCanvas = document.createElement('canvas')
+      sCanvas.width = 512; sCanvas.height = 256
+      const sctx = sCanvas.getContext('2d')
+      sctx.fillStyle = '#2266aa'; sctx.fillRect(0, 0, 512, 256)
+      sctx.fillStyle = '#ffe94d'
+      sctx.font = '900 130px "Segoe UI", sans-serif'
+      sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
+      sctx.fillText('RADIAN', 256, 100)
+      sctx.fillStyle = '#ffffff'
+      sctx.font = '800 44px "Segoe UI", sans-serif'
+      sctx.fillText('SITE OFFICE', 256, 190)
+      const sTex = new THREE.CanvasTexture(sCanvas)
+      sTex.colorSpace = THREE.SRGBColorSpace
+      const panel = new THREE.Mesh(
+        new THREE.PlaneGeometry(3.6, 1.6),
+        new THREE.MeshBasicMaterial({ map: sTex })
+      )
+      panel.position.set(0, 1.4, -1.12); panel.rotation.y = Math.PI; g.add(panel)
+      // Step at the door
+      const step = box(1.0, 0.16, 0.5, 0x444444); step.position.set(1.4, 0.08, 1.45); g.add(step)
+      return g
+    }
+
+    // Rotating yellow beacon — pole + housing + spinning lens + real point light.
+    function makeBeacon() {
+      const g = new THREE.Group()
+      const pole = cyl(0.06, 0.08, 1.6, 6, 0x444444); pole.position.y = 0.8; g.add(pole)
+      const base = cyl(0.18, 0.20, 0.10, 8, 0x222222); base.position.y = 1.62; g.add(base)
+      // Lens pivot — spins on Y; carries the colored dome and a directional shutter
+      const lensPivot = new THREE.Group(); lensPivot.position.y = 1.78; g.add(lensPivot)
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(0.18, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.92 })
+      )
+      lensPivot.add(dome)
+      // Bright spot on one side of the dome — sells the spinning emitter look
+      const hotspot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.10, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0xfff2aa, transparent: true, opacity: 0.95 })
+      )
+      hotspot.position.set(0.14, 0.06, 0); lensPivot.add(hotspot)
+      // Real point light, colored amber. Intensity oscillates in the animate loop.
+      const light = new THREE.PointLight(0xffaa55, 0.8, 8, 1.5)
+      light.position.y = 1.78; g.add(light)
+      g.userData.lensPivot = lensPivot
+      g.userData.light = light
+      return g
+    }
+
+    // Stack of scaffold tubes lying flat — bundles with strap bands.
+    function makeTubeBundle() {
+      const g = new THREE.Group()
+      // 7 tubes in a 3-2-2 hex stack
+      const stack = [
+        [-0.50, 0.13, 0], [0, 0.13, 0], [0.50, 0.13, 0],
+        [-0.25, 0.36, 0], [0.25, 0.36, 0],
+        [0, 0.59, 0],
+      ]
+      for (const [x, y, z] of stack) {
+        const tube = cyl(0.14, 0.14, 2.6, 8, 0xc0c0c0)
+        tube.rotation.z = Math.PI / 2
+        tube.position.set(x, y, z)
+        g.add(tube)
+      }
+      // Strap bands — two cyan bands across the bundle
+      for (const bx of [-0.85, 0.85]) {
+        const band = box(0.10, 0.85, 0.30, 0x00aaee)
+        band.position.set(bx, 0.36, 0); g.add(band)
+      }
+      return g
+    }
+
+    // Forklift — yellow body, mast, forks, with a pallet on top.
+    function makeForklift() {
+      const g = new THREE.Group()
+      const body = box(1.6, 0.9, 1.2, 0xffcc00); body.position.set(0, 0.55, 0); g.add(body)
+      const cab = box(1.0, 1.2, 1.05, 0xffcc00); cab.position.set(-0.25, 1.55, 0); g.add(cab)
+      // Cab cage (rollover bars)
+      for (const [x, z] of [[-0.7, 0.5], [0.2, 0.5], [-0.7, -0.5], [0.2, -0.5]]) {
+        const bar = cyl(0.04, 0.04, 1.2, 4, 0x111111); bar.position.set(x, 1.7, z); g.add(bar)
+      }
+      const cage = box(1.05, 0.06, 1.05, 0x111111); cage.position.set(-0.25, 2.30, 0); g.add(cage)
+      // Seat
+      const seat = box(0.5, 0.12, 0.55, 0x222222); seat.position.set(-0.25, 1.20, 0); g.add(seat)
+      // Mast (front)
+      const mast1 = box(0.10, 2.4, 0.10, 0x222222); mast1.position.set(0.85, 1.2, -0.45); g.add(mast1)
+      const mast2 = box(0.10, 2.4, 0.10, 0x222222); mast2.position.set(0.85, 1.2,  0.45); g.add(mast2)
+      const mastTop = box(1.10, 0.10, 0.10, 0x444444); mastTop.position.set(0.85, 2.4, 0); g.add(mastTop)
+      // Carriage + forks
+      const carriage = box(0.12, 0.5, 1.0, 0x444444); carriage.position.set(0.85, 0.55, 0); g.add(carriage)
+      const forkL = box(0.95, 0.08, 0.12, 0x222222); forkL.position.set(1.35, 0.34, -0.30); g.add(forkL)
+      const forkR = box(0.95, 0.08, 0.12, 0x222222); forkR.position.set(1.35, 0.34,  0.30); g.add(forkR)
+      // Pallet on the forks (with bricks on top so the forklift "is doing something")
+      for (let i = 0; i < 3; i++) {
+        const plank = box(1.0, 0.05, 0.18, 0xa67442)
+        plank.position.set(1.35, 0.42, -0.30 + i * 0.30); g.add(plank)
+      }
+      for (let r = 0; r < 2; r++) {
+        for (let c = 0; c < 2; c++) {
+          const brick = box(0.35, 0.18, 0.30, 0xcc4422)
+          brick.position.set(1.35 + (c - 0.5) * 0.4, 0.55 + r * 0.20, (r % 2) * 0.06)
+          g.add(brick)
+        }
+      }
+      // Wheels
+      for (const [x, z] of [[-0.55, -0.65], [-0.55, 0.65], [0.55, -0.5], [0.55, 0.5]]) {
+        const w = cyl(0.30, 0.30, 0.18, 12, 0x111111)
+        w.rotation.x = Math.PI / 2; w.position.set(x, 0.30, z); g.add(w)
+      }
+      return g
+    }
+
+    // Bundle of rebar — bunch of long thin orange cylinders strapped together.
+    function makeRebarBundle() {
+      const g = new THREE.Group()
+      const positions = [
+        [-0.18, 0.10, 0], [0, 0.10, 0], [0.18, 0.10, 0],
+        [-0.09, 0.26, 0], [0.09, 0.26, 0],
+      ]
+      for (const [x, y, z] of positions) {
+        const bar = cyl(0.06, 0.06, 3.0, 6, 0xcc6622)
+        bar.rotation.z = Math.PI / 2
+        bar.position.set(x, y, z); g.add(bar)
+      }
+      // Strap
+      for (const bx of [-1.0, 1.0]) {
+        const band = box(0.06, 0.40, 0.20, 0x222222)
+        band.position.set(bx, 0.18, 0); g.add(band)
+      }
+      return g
+    }
+
+    // Propane tank — squat cylinder + cap.
+    function makePropaneTank() {
+      const g = new THREE.Group()
+      const body = cyl(0.32, 0.32, 1.0, 12, 0xee5544); body.position.y = 0.55; g.add(body)
+      const cap = cyl(0.22, 0.18, 0.18, 8, 0x333333); cap.position.y = 1.13; g.add(cap)
+      const valve = box(0.10, 0.06, 0.06, 0xffaa00); valve.position.set(0, 1.22, 0); g.add(valve)
+      const ring = cyl(0.34, 0.34, 0.06, 12, 0x333333); ring.position.y = 0.10; g.add(ring)
+      // Warning label band
+      const band = cyl(0.33, 0.33, 0.18, 12, 0xffe94d); band.position.y = 0.85; g.add(band)
+      return g
+    }
+
+    // "MEN AT WORK" sandwich board — A-frame sign, gently sways in the animate loop.
+    function makeSandwichBoard() {
+      const g = new THREE.Group()
+      // Two leaning panels forming an A — both render the same canvas-textured face
+      const sCanvas = document.createElement('canvas')
+      sCanvas.width = 256; sCanvas.height = 256
+      const sctx = sCanvas.getContext('2d')
+      sctx.fillStyle = '#ffaa00'; sctx.fillRect(0, 0, 256, 256)
+      sctx.fillStyle = '#1a0a44'
+      sctx.fillRect(8, 8, 240, 240)
+      sctx.fillStyle = '#ffe94d'
+      sctx.font = '900 38px "Segoe UI", sans-serif'
+      sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
+      sctx.fillText('MEN', 128, 80)
+      sctx.fillText('AT', 128, 128)
+      sctx.fillText('WORK', 128, 176)
+      // Yellow border
+      sctx.strokeStyle = '#ffe94d'; sctx.lineWidth = 6
+      sctx.strokeRect(20, 20, 216, 216)
+      const sTex = new THREE.CanvasTexture(sCanvas)
+      sTex.colorSpace = THREE.SRGBColorSpace
+      const mat = new THREE.MeshBasicMaterial({ map: sTex, side: THREE.DoubleSide })
+      const front = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 1.0), mat)
+      front.position.set(0, 0.55, 0.18); front.rotation.x = 0.2; g.add(front)
+      const back = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 1.0), mat)
+      back.position.set(0, 0.55, -0.18); back.rotation.x = -0.2; g.add(back)
+      // Hinge bar at the top
+      const hinge = cyl(0.03, 0.03, 0.95, 4, 0x222222)
+      hinge.rotation.z = Math.PI / 2; hinge.position.y = 1.05; g.add(hinge)
+      g.userData.swayPhase = Math.random() * Math.PI * 2
+      return g
+    }
+
+    // Handles for props that animate per-frame (drum spin, beacon sweep, sandwich-board sway).
+    // Populated inside the World block below; consumed in animate().
+    const sceneAnimated = { cementMixer: null, beacon: null, sandwichBoard: null }
+
     // World — Radian construction site
     {
       // Asphalt pad the tower rises from
@@ -756,6 +1030,49 @@ export default function Game() {
         const tb = makeToolbox(); tb.position.set(7.6, 0, -3.0); tb.rotation.y = -1.0; scene.add(tb)
         const wb = makeWheelbarrow(); wb.position.set(-7.0, 0, 0.5); wb.rotation.y = -1.4; scene.add(wb)
         const sb = makeSandbagPile(); sb.position.set(7.0, 0, 1.5); sb.rotation.y = 0.6; scene.add(sb)
+        // Stack of scaffold tubes near the pallet
+        const tubes = makeTubeBundle(); tubes.position.set(-5.6, 0, 5.4); tubes.rotation.y = -0.3; scene.add(tubes)
+        // Rebar bundle and propane tank set dressing
+        const rebar = makeRebarBundle(); rebar.position.set(3.6, 0, 4.8); rebar.rotation.y = 0.4; scene.add(rebar)
+        const propane = makePropaneTank(); propane.position.set(2.6, 0, 4.6); scene.add(propane)
+      }
+
+      // Site office shipping container — back-right of the site
+      {
+        const office = makeSiteOffice()
+        office.position.set(8.4, 0, -8.0); office.rotation.y = -0.45
+        scene.add(office)
+      }
+
+      // Cement mixer in the back, drum animated in animate loop
+      {
+        const mixer = makeCementMixer()
+        mixer.position.set(3.5, 0, -6.6); mixer.rotation.y = -0.4
+        scene.add(mixer)
+        sceneAnimated.cementMixer = mixer
+      }
+
+      // Rotating beacon on its own pole near the site office
+      {
+        const beacon = makeBeacon()
+        beacon.position.set(5.5, 0, -8.6)
+        scene.add(beacon)
+        sceneAnimated.beacon = beacon
+      }
+
+      // Forklift parked off-site
+      {
+        const forklift = makeForklift()
+        forklift.position.set(8.6, 0, 2.6); forklift.rotation.y = -1.4
+        scene.add(forklift)
+      }
+
+      // "MEN AT WORK" sandwich board — sways gently
+      {
+        const sw = makeSandwichBoard()
+        sw.position.set(-1.6, 0, 5.4); sw.rotation.y = 0.3
+        scene.add(sw)
+        sceneAnimated.sandwichBoard = sw
       }
     }
 
@@ -904,7 +1221,7 @@ export default function Game() {
         const r = Math.random() * 0.22 + 0.08
         const m = new THREE.Mesh(
           Math.random() < 0.5 ? new THREE.SphereGeometry(r, 6, 4) : new THREE.BoxGeometry(r * 2, r * 2, r * 2),
-          new THREE.MeshToonMaterial({ color: cols[Math.floor(Math.random() * cols.length)] })
+          new THREE.MeshToonMaterial({ color: cols[Math.floor(Math.random() * cols.length)], transparent: true })
         )
         m.position.set(
           x + (Math.random() - 0.5) * 2.5,
@@ -927,7 +1244,7 @@ export default function Game() {
       for (let i = 0; i < 24; i++) {
         const ang = (i / 24) * Math.PI * 2
         const r = Math.random() * 0.15 + 0.12
-        const m = new THREE.Mesh(new THREE.SphereGeometry(r, 5, 4), new THREE.MeshToonMaterial({ color: 0xffe94d }))
+        const m = new THREE.Mesh(new THREE.SphereGeometry(r, 5, 4), new THREE.MeshToonMaterial({ color: 0xffe94d, transparent: true }))
         m.position.set(x, y, z)
         const speed = Math.random() * 0.3 + 0.15
         const v = new THREE.Vector3(Math.cos(ang) * speed, Math.sin(ang) * speed + 0.1, (Math.random() - 0.5) * 0.2)
@@ -1106,6 +1423,9 @@ export default function Game() {
       projectileTimer: 240,
       projectileWarnings: [],
       shockwaves: [],
+      // Crack/scorch decals attached to pieces after projectile hits.
+      // Live as long as life > 0; the animate loop fades them and detaches.
+      impactDecals: [],
       biasWarnCooldown: 0,
       tier: 0,
       perfectCount: 0,
@@ -1264,6 +1584,87 @@ export default function Game() {
       return t
     })()
 
+    // Soft smoke puff for projectile exhaust trails — radial gradient with a
+    // mottled core so successive puffs read as a turbulent plume, not a smooth
+    // tube of light. Tinted at use-site via SpriteMaterial.color.
+    const smokeTex = (() => {
+      const c = document.createElement('canvas')
+      c.width = c.height = 128
+      const cx = c.getContext('2d')
+      const g = cx.createRadialGradient(64, 64, 4, 64, 64, 64)
+      g.addColorStop(0.0,  'rgba(255,255,255,0.90)')
+      g.addColorStop(0.35, 'rgba(220,220,235,0.55)')
+      g.addColorStop(0.75, 'rgba(180,180,210,0.18)')
+      g.addColorStop(1.0,  'rgba(140,140,170,0.0)')
+      cx.fillStyle = g
+      cx.fillRect(0, 0, 128, 128)
+      // Mottle: scatter a few fainter dabs to break up the smoothness
+      for (let i = 0; i < 14; i++) {
+        const rx = 28 + Math.random() * 72
+        const ry = 28 + Math.random() * 72
+        const rr = 6 + Math.random() * 12
+        const gg = cx.createRadialGradient(rx, ry, 0, rx, ry, rr)
+        gg.addColorStop(0, 'rgba(255,255,255,0.25)')
+        gg.addColorStop(1, 'rgba(255,255,255,0)')
+        cx.fillStyle = gg
+        cx.fillRect(rx - rr, ry - rr, rr * 2, rr * 2)
+      }
+      const t = new THREE.CanvasTexture(c)
+      t.colorSpace = THREE.SRGBColorSpace
+      return t
+    })()
+
+    // Crack/scorch decal for projectile impacts — radial dark scorch with
+    // jagged crack lines emanating from the centre. Snapped onto the hit
+    // piece in onProjectileHit so it follows the piece's transforms.
+    const crackTex = (() => {
+      const c = document.createElement('canvas')
+      c.width = c.height = 256
+      const cx = c.getContext('2d')
+      // Dark scorch base
+      const g = cx.createRadialGradient(128, 128, 0, 128, 128, 128)
+      g.addColorStop(0.00, 'rgba(40, 0, 60, 0.95)')
+      g.addColorStop(0.30, 'rgba(60, 10, 80, 0.65)')
+      g.addColorStop(0.65, 'rgba(80, 20, 100, 0.20)')
+      g.addColorStop(1.00, 'rgba(80, 20, 100, 0.0)')
+      cx.fillStyle = g
+      cx.fillRect(0, 0, 256, 256)
+      // Jagged cracks — pink/purple lightning lines radiating from centre
+      cx.strokeStyle = 'rgba(255, 130, 230, 0.95)'
+      cx.lineWidth = 3
+      for (let i = 0; i < 7; i++) {
+        const ang = (i / 7) * Math.PI * 2 + Math.random() * 0.4
+        let x = 128, y = 128
+        cx.beginPath(); cx.moveTo(x, y)
+        const segs = 4 + Math.floor(Math.random() * 3)
+        for (let s = 0; s < segs; s++) {
+          const len = 18 + Math.random() * 22
+          x += Math.cos(ang + (Math.random() - 0.5) * 0.6) * len
+          y += Math.sin(ang + (Math.random() - 0.5) * 0.6) * len
+          cx.lineTo(x, y)
+        }
+        cx.stroke()
+      }
+      // Brighter inner cracks
+      cx.strokeStyle = 'rgba(255, 220, 255, 0.85)'
+      cx.lineWidth = 1.4
+      for (let i = 0; i < 5; i++) {
+        const ang = Math.random() * Math.PI * 2
+        let x = 128, y = 128
+        cx.beginPath(); cx.moveTo(x, y)
+        for (let s = 0; s < 3; s++) {
+          const len = 10 + Math.random() * 18
+          x += Math.cos(ang + (Math.random() - 0.5) * 0.8) * len
+          y += Math.sin(ang + (Math.random() - 0.5) * 0.8) * len
+          cx.lineTo(x, y)
+        }
+        cx.stroke()
+      }
+      const t = new THREE.CanvasTexture(c)
+      t.colorSpace = THREE.SRGBColorSpace
+      return t
+    })()
+
     // Helper: convert a world-space Y to a screen-space Y (in pixels) using the
     // current camera. Used for telegraph placement so the arrow always points at
     // where the projectile will actually appear, regardless of camera height.
@@ -1285,7 +1686,12 @@ export default function Game() {
       el.className = 'proj-warn ' + (dir < 0 ? 'left' : 'right')
       // CSS-drawn triangle (border trick) — guaranteed look across platforms,
       // unlike a unicode arrow glyph that font-fallback can swap out.
-      el.innerHTML = '<div class="tri"></div><div class="incoming">INCOMING</div>'
+      // The targeting beam grows across the screen via a CSS keyframe so the
+      // player gets a clear "from here, at this height, RIGHT NOW" read.
+      el.innerHTML =
+        '<div class="beam"></div>' +
+        '<div class="tri"></div>' +
+        '<div class="incoming">INCOMING</div>'
       // Project world Y → screen Y so the arrow lines up vertically with the actual shot.
       const screenY = worldYToScreenY(absY)
       el.style.top = Math.max(60, Math.min(window.innerHeight - 80, screenY)) + 'px'
@@ -1348,25 +1754,90 @@ export default function Game() {
         vy: 0,
         wobblePhase: Math.random() * Math.PI * 2,
         life: 280, // tight safety net; actual cleanup happens on |x| > 28
-        radius: 0.95, // slightly larger to match the bigger sprite
+        // Previous-frame world position — used by the swept hit test so fast
+        // crossings near the swing apex don't tunnel through the piece.
+        // Seeded to spawn position so the first frame's segment is a point.
+        prevX: dir * -22,
+        prevY: absY,
+        // Radius matches the visible logo sprite (scale 2.4 → ~1.2 half-extent)
+        // plus a small fairness pad. The old 0.95 was tuned to the inner glow
+        // and felt clunky — the player sees a giant logo, the hit area should
+        // match what they see, not a hidden inner hitbox.
+        radius: 1.45,
         trail: [], // logo ghost copies, fade out behind the main sprite
+        // Smoke plume — additive puffs emitted every frame behind the projectile.
+        // Lighter, lasts longer than the logo ghosts and reads as exhaust rather
+        // than a brand echo. Each puff has its own opacity/scale lerp.
+        smoke: [],
+        // Logo screen-space rotation accumulator — gives the brand a tumbling read.
+        spin: Math.random() * Math.PI * 2,
+        spinV: (dir < 0 ? -1 : 1) * (0.04 + Math.random() * 0.03),
       })
     }
 
-    // Rotation-aware hit test. The swinging piece visibly rotates ±0.22 rad from the
-    // swing and another ±0.25 rad from prior projectile hits, so an axis-aligned AABB
-    // misses real visual hits. Transform the projectile into the piece's local frame
-    // and do the AABB check there.
+    // Rotation- + center-correct + swept hit test.
+    //
+    // Three things this gets right that the old version did not:
+    //   1. Real visual center: the piece's bbox center (computed at build time)
+    //      is added to piece.position so the test region matches what the
+    //      player sees, not the geometry origin (which is often the piece's
+    //      bottom for bottom-anchored builders like pole/ledger).
+    //   2. Real half-extents: uses the bbox half-width on X and Y instead of
+    //      pw/2 and ph/2 alone — captures protrusions like the rocket nose,
+    //      flag pole, crane jib, etc. that stick out beyond the nominal pw/ph.
+    //   3. Swept segment: the projectile's previous-frame position is also
+    //      transformed and we test the segment-AABB intersection. Near the
+    //      swing apex the projectile + piece can have relative speeds >1u/frame
+    //      so a point sample misses true crossings (tunneling).
     function projectileHitsPiece(pj, piece) {
-      const dx = pj.mesh.position.x - piece.position.x
-      const dy = pj.mesh.position.y - piece.position.y
+      const cx = piece.position.x + (piece.userData.localCenterX || 0)
+      const cy = piece.position.y + (piece.userData.localCenterY || piece.userData.ph * 0.5)
       const a = -piece.rotation.z
       const c = Math.cos(a), s = Math.sin(a)
-      const lx = dx * c - dy * s
-      const ly = dx * s + dy * c
-      const hw = piece.userData.pw / 2 + pj.radius
-      const hh = piece.userData.ph / 2 + pj.radius
-      return Math.abs(lx) < hw && Math.abs(ly) < hh
+      // Current position in piece-local frame
+      const dx1 = pj.mesh.position.x - cx
+      const dy1 = pj.mesh.position.y - cy
+      const lx1 = dx1 * c - dy1 * s
+      const ly1 = dx1 * s + dy1 * c
+      // Previous-frame position (initialised to current on spawn so the first
+      // sample is a degenerate point — equivalent to the old behaviour).
+      const px = pj.prevX !== undefined ? pj.prevX : pj.mesh.position.x
+      const py = pj.prevY !== undefined ? pj.prevY : pj.mesh.position.y
+      const dx0 = px - cx
+      const dy0 = py - cy
+      const lx0 = dx0 * c - dy0 * s
+      const ly0 = dx0 * s + dy0 * c
+      const hw = (piece.userData.localHalfX || piece.userData.pw * 0.5) + pj.radius
+      const hh = (piece.userData.localHalfY || piece.userData.ph * 0.5) + pj.radius
+      // Liang–Barsky-style segment-vs-AABB. Returns true if the segment
+      // [lx0,ly0]->[lx1,ly1] intersects the box [-hw,hw]x[-hh,hh].
+      let tmin = 0, tmax = 1
+      const dxL = lx1 - lx0, dyL = ly1 - ly0
+      // X slab
+      if (Math.abs(dxL) < 1e-9) {
+        if (lx0 < -hw || lx0 > hw) return false
+      } else {
+        const t1 = (-hw - lx0) / dxL
+        const t2 = ( hw - lx0) / dxL
+        const tnear = Math.min(t1, t2)
+        const tfar  = Math.max(t1, t2)
+        if (tnear > tmin) tmin = tnear
+        if (tfar  < tmax) tmax = tfar
+        if (tmin > tmax) return false
+      }
+      // Y slab
+      if (Math.abs(dyL) < 1e-9) {
+        if (ly0 < -hh || ly0 > hh) return false
+      } else {
+        const t1 = (-hh - ly0) / dyL
+        const t2 = ( hh - ly0) / dyL
+        const tnear = Math.min(t1, t2)
+        const tfar  = Math.max(t1, t2)
+        if (tnear > tmin) tmin = tnear
+        if (tfar  < tmax) tmax = tfar
+        if (tmin > tmax) return false
+      }
+      return true
     }
 
     // Expanding purple shockwave ring on impact — distinct from landing particles
@@ -1392,6 +1863,10 @@ export default function Game() {
       scene.remove(pj.mesh)
       for (const t of pj.trail) scene.remove(t.sprite)
       pj.trail.length = 0
+      if (pj.smoke) {
+        for (const s of pj.smoke) scene.remove(s.sprite)
+        pj.smoke.length = 0
+      }
     }
 
     function onProjectileHit(pj) {
@@ -1402,10 +1877,34 @@ export default function Game() {
       if (state.currentPiece) {
         state.currentPiece.rotation.z += dir * 0.25
         state.currentPiece.rotation.x = (Math.random() - 0.5) * 0.4
+        spawnImpactDecal(state.currentPiece, pj.mesh.position.x, pj.mesh.position.y)
       }
       state.screenShake = Math.max(state.screenShake, 0.55)
       spawnShockwave(pj.mesh.position.x, pj.mesh.position.y)
       spawnBurst(pj.mesh.position.x, pj.mesh.position.y, 0, 22, [0xcc66ff, 0xff88ff, 0xffffff, 0x9966ff, 0xff44ff])
+    }
+
+    // Crack/scorch decal — parented to the hit piece so it stays glued to the
+    // piece through the swing/drop/land. Tracked in state.impactDecals so the
+    // animate loop can fade it out and detach it.
+    function spawnImpactDecal(piece, worldX, worldY) {
+      const local = piece.worldToLocal(new THREE.Vector3(worldX, worldY, 0))
+      // Snap to the piece's front face so the crack is visible from camera
+      local.z = piece.userData.pd ? piece.userData.pd / 2 + 0.05 : 1.4
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: crackTex,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }))
+      const baseScale = 1.6 + Math.random() * 0.4
+      sprite.scale.set(baseScale, baseScale, 1)
+      sprite.position.copy(local)
+      // Slight rotation variation so successive hits don't look identical
+      sprite.material.rotation = Math.random() * Math.PI * 2
+      piece.add(sprite)
+      state.impactDecals.push({ sprite, piece, life: 1, baseScale })
     }
 
     // ── POWER-UPS ─────────────────────────────────────────
@@ -1771,6 +2270,11 @@ export default function Game() {
       state.projectiles = []
       for (const sw of state.shockwaves) scene.remove(sw.mesh)
       state.shockwaves = []
+      // Detach + clear any lingering impact decals from the previous run
+      if (state.impactDecals) {
+        for (const d of state.impactDecals) d.piece.remove(d.sprite)
+      }
+      state.impactDecals = []
       for (const pu of state.powerups) disposePowerup(pu)
       state.powerups = []
       state.projectileTimer = 480 + Math.random() * 360 // generous grace period at start
@@ -1957,7 +2461,8 @@ export default function Game() {
     // carrying the recap payload. Used to persist scores to the leaderboard.
     let onRunEnd = null
 
-    engineRef.current = { startGame, generateScoreCard, setCameraFov, setPaused }
+    const setFpsVisible = (vis) => { fpsSampler.visible = !!vis }
+    engineRef.current = { startGame, generateScoreCard, setCameraFov, setPaused, setFpsVisible }
     engineRef.current.setRunEndListener = (fn) => { onRunEnd = fn }
 
     // Input
@@ -1994,12 +2499,47 @@ export default function Game() {
     canvas.addEventListener('pointerdown', onPointer)
     canvas.addEventListener('contextmenu', onContextMenu)
 
+    // Reusable scratch objects — reused every frame inside animate() to avoid
+    // per-frame allocations. Vector3s are allocated lazily inside a hot path
+    // otherwise; keeping them here keeps the GC quiet.
+    const _scratchVecCenter = new THREE.Vector3()
+    const _scratchVecEdge = new THREE.Vector3()
+    const _scratchClearColor = new THREE.Color()
+
+    // FPS sampling — count frames over a rolling ~500ms window so the readout
+    // updates often enough to feel live but doesn't flicker between integers
+    // every frame. The DOM write only fires when the window closes.
+    const fpsSampler = { frames: 0, windowStart: 0, lastValue: 0, visible: false }
+
     // Main loop
     let raf = 0
     let cancelled = false
     function animate() {
       if (cancelled) return
       raf = requestAnimationFrame(animate)
+      // FPS sampler — closes a ~500ms window and writes to the HUD ref. We only
+      // do the DOM update when the window closes (twice a second), so this is
+      // effectively free even when the counter is visible.
+      if (fpsSampler.visible) {
+        const now = performance.now()
+        if (fpsSampler.windowStart === 0) fpsSampler.windowStart = now
+        fpsSampler.frames++
+        const elapsed = now - fpsSampler.windowStart
+        if (elapsed >= 500) {
+          const fps = Math.round((fpsSampler.frames * 1000) / elapsed)
+          if (fps !== fpsSampler.lastValue && fpsRef.current) {
+            fpsRef.current.textContent = fps + ' FPS'
+            fpsSampler.lastValue = fps
+          }
+          fpsSampler.frames = 0
+          fpsSampler.windowStart = now
+        }
+      } else if (fpsSampler.windowStart !== 0) {
+        // Reset when toggled off so the next enable starts a fresh window.
+        fpsSampler.windowStart = 0
+        fpsSampler.frames = 0
+        fpsSampler.lastValue = 0
+      }
       // While paused: keep rendering the current frame so the background looks
       // alive behind the menu, but skip every gameplay update.
       if (state.paused) {
@@ -2037,6 +2577,32 @@ export default function Game() {
       for (const s of siteSpots) {
         const ty = Math.max(6, state.swingHeight * 0.65)
         s.target.position.y += (ty - s.target.position.y) * 0.04
+      }
+
+      // Cement mixer drum — slow continuous rotation around its (tilted) length axis.
+      if (sceneAnimated.cementMixer) {
+        // The drum mesh is rotated 90° around Z inside its pivot, so spinning the
+        // pivot around X gives the visible drum-on-its-axle rotation.
+        sceneAnimated.cementMixer.userData.drum.rotation.x += 0.025
+      }
+
+      // Beacon — lens spins, point light pulses with the spin so the brightest
+      // moment lines up with the visible hotspot pointing at the camera.
+      if (sceneAnimated.beacon) {
+        const b = sceneAnimated.beacon.userData
+        b.lensPivot.rotation.y += 0.08
+        // Pulse intensity by the lens facing component (cos of rotation), clamped
+        // so it never goes fully dark — gives a sweeping-beam read.
+        const faceT = (Math.cos(b.lensPivot.rotation.y) + 1) * 0.5 // 0..1
+        b.light.intensity = 0.35 + faceT * 0.95
+      }
+
+      // Sandwich board — gentle 2-axis sway. Light wind on a freestanding sign.
+      if (sceneAnimated.sandwichBoard) {
+        const sw = sceneAnimated.sandwichBoard
+        const ph = sw.userData.swayPhase
+        sw.rotation.z = Math.sin(state.frameN * 0.018 + ph) * 0.04
+        sw.rotation.x = Math.sin(state.frameN * 0.012 + ph * 0.7) * 0.025
       }
 
       // Wind gusts — telegraphed sustained drift on the swing X.
@@ -2083,13 +2649,13 @@ export default function Game() {
         // the viewport on narrow viewports. Project the piece's Y/Z to NDC and
         // clamp sx so the piece's X footprint stays within ~94% of visible width.
         const halfW = state.currentPiece.userData.pw * 0.5
-        const _vCenter = new THREE.Vector3(0, state.swingHeight, 0).project(camera)
-        const _vEdge = new THREE.Vector3(1, state.swingHeight, 0).project(camera)
-        const ndcPerWorldX = _vEdge.x - _vCenter.x
+        _scratchVecCenter.set(0, state.swingHeight, 0).project(camera)
+        _scratchVecEdge.set(1, state.swingHeight, 0).project(camera)
+        const ndcPerWorldX = _scratchVecEdge.x - _scratchVecCenter.x
         if (Math.abs(ndcPerWorldX) > 1e-5) {
           const margin = 0.94
-          const maxRight = (margin - _vCenter.x) / ndcPerWorldX - halfW
-          const maxLeft = (-margin - _vCenter.x) / ndcPerWorldX + halfW
+          const maxRight = (margin - _scratchVecCenter.x) / ndcPerWorldX - halfW
+          const maxLeft = (-margin - _scratchVecCenter.x) / ndcPerWorldX + halfW
           if (maxRight > maxLeft) {
             if (sx > maxRight) sx = maxRight
             else if (sx < maxLeft) sx = maxLeft
@@ -2298,6 +2864,11 @@ export default function Game() {
       // Update projectiles — drift across, sine wobble, trail ghosts, hit-test the swinging piece.
       for (let i = state.projectiles.length - 1; i >= 0; i--) {
         const pj = state.projectiles[i]
+        // Record where the projectile was BEFORE this frame's movement; the
+        // swept hit test compares the segment from prev → current against the
+        // piece AABB to catch tunneling at high relative velocities.
+        pj.prevX = pj.mesh.position.x
+        pj.prevY = pj.mesh.position.y
         pj.mesh.position.x += pj.vx
         pj.mesh.position.y += pj.vy + Math.sin((state.frameN + pj.wobblePhase * 60) * 0.06) * 0.025
 
@@ -2307,6 +2878,57 @@ export default function Game() {
         if (pj.halo) {
           const haloPulse = 6.5 + Math.sin(state.frameN * 0.07 + pj.wobblePhase) * 0.55
           pj.halo.scale.set(haloPulse, haloPulse, 1)
+        }
+
+        // Logo spin — sprite rotation is screen-space, so this just tumbles the
+        // brand mark as the projectile crosses without affecting hit testing.
+        pj.spin += pj.spinV
+        pj.logo.material.rotation = pj.spin
+
+        // Smoke plume — emit a puff every frame slightly behind the projectile,
+        // jittered perpendicular to motion so the plume reads as turbulent.
+        {
+          const back = -Math.sign(pj.vx) || 1
+          const jitter = (Math.random() - 0.5) * 0.6
+          const puff = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: smokeTex,
+            color: 0xddccff,
+            transparent: true,
+            opacity: 0.55,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          }))
+          const startScale = 1.4 + Math.random() * 0.5
+          puff.scale.set(startScale, startScale, 1)
+          puff.position.set(
+            pj.mesh.position.x + back * (0.3 + Math.random() * 0.3),
+            pj.mesh.position.y + jitter,
+            -0.15,
+          )
+          scene.add(puff)
+          pj.smoke.push({
+            sprite: puff,
+            opacity: 0.55,
+            // Drift slightly upward + opposite the projectile, so the plume
+            // hangs in the air after the logo passes.
+            vx: back * 0.018 + (Math.random() - 0.5) * 0.01,
+            vy: 0.012 + Math.random() * 0.012,
+            growth: 1.04 + Math.random() * 0.02,
+          })
+        }
+        // Fade + drift smoke puffs.
+        for (let j = pj.smoke.length - 1; j >= 0; j--) {
+          const sm = pj.smoke[j]
+          sm.opacity -= 0.022
+          if (sm.opacity <= 0) {
+            scene.remove(sm.sprite)
+            pj.smoke.splice(j, 1)
+          } else {
+            sm.sprite.position.x += sm.vx
+            sm.sprite.position.y += sm.vy
+            sm.sprite.material.opacity = sm.opacity
+            sm.sprite.scale.multiplyScalar(sm.growth)
+          }
         }
 
         // Trail — drop a fading logo ghost every 3 frames behind the projectile.
@@ -2320,6 +2942,8 @@ export default function Game() {
           ghost.scale.set(2.0, 2.0, 1)
           ghost.position.copy(pj.mesh.position)
           ghost.position.z = -0.02
+          // Inherit the parent's tumble so the ghost doesn't snap upright
+          ghost.material.rotation = pj.spin
           scene.add(ghost)
           pj.trail.push({ sprite: ghost, opacity: 0.55 })
         }
@@ -2393,6 +3017,23 @@ export default function Game() {
         }
       }
 
+      // Impact decals — crack/scorch sprites stuck on hit pieces. Decay over
+      // ~1.6s. Decay rate is slow enough that mid-flight hits stay visible
+      // through the land, then quietly fade off the stacked piece.
+      for (let i = state.impactDecals.length - 1; i >= 0; i--) {
+        const d = state.impactDecals[i]
+        d.life -= 0.012
+        if (d.life <= 0) {
+          d.piece.remove(d.sprite)
+          state.impactDecals.splice(i, 1)
+        } else {
+          d.sprite.material.opacity = Math.min(0.95, d.life * 1.1)
+          // Slight grow as it fades — feels like the scorch dissipating
+          const growT = 1 + (1 - d.life) * 0.25
+          d.sprite.scale.set(d.baseScale * growT, d.baseScale * growT, 1)
+        }
+      }
+
       // Pieces that missed the stack — physics-fall them off the tower.
       for (let i = state.fallingPieces.length - 1; i >= 0; i--) {
         const fp = state.fallingPieces[i]
@@ -2417,7 +3058,6 @@ export default function Game() {
         p.mesh.rotation.y += p.spin.y
         p.mesh.rotation.z += p.spin.z
         p.mesh.material.opacity = Math.max(0, p.life)
-        p.mesh.material.transparent = true
         if (p.life <= 0) {
           scene.remove(p.mesh)
           particles.splice(i, 1)
@@ -2494,11 +3134,12 @@ export default function Game() {
         const baseG = 0.02
         const baseB = 0.28 + Math.sin(t * 0.7) * 0.06
         const f = state.flash
-        renderer.setClearColor(new THREE.Color(
+        _scratchClearColor.setRGB(
           baseR + (1 - baseR) * f,
           baseG + (1 - baseG) * f,
           baseB + (1 - baseB) * f,
-        ))
+        )
+        renderer.setClearColor(_scratchClearColor)
       }
 
       // Game-over delay
@@ -2582,6 +3223,12 @@ export default function Game() {
     engineRef.current?.setCameraFov?.(fov)
   }, [fov])
 
+  // Toggle FPS counter visibility on the engine + persist preference.
+  useEffect(() => {
+    engineRef.current?.setFpsVisible?.(showFps)
+    try { localStorage.setItem('radian_show_fps', showFps ? '1' : '0') } catch { /* noop */ }
+  }, [showFps])
+
   // Persist the active player so they don't have to re-enter on every run.
   useEffect(() => {
     try {
@@ -2651,6 +3298,8 @@ export default function Game() {
           </div>
         </div>
         <div id="hint"><span className="key">SPACE</span> to drop · tap anywhere</div>
+
+        {showFps && <div id="fps-counter" ref={fpsRef}>— FPS</div>}
 
         <div id="brand-mark">
           <img src="/logo.png" alt="Radian" />
@@ -2735,6 +3384,22 @@ export default function Game() {
                   onChange={(e) => setFov(parseInt(e.target.value, 10))}
                 />
                 <div className="setting-hint">Lens character only — framing stays consistent across the range</div>
+              </div>
+              <div className="setting-row">
+                <label className="setting-label" htmlFor="fps-toggle">
+                  Show FPS Counter
+                  <span className="setting-value">{showFps ? 'ON' : 'OFF'}</span>
+                </label>
+                <label className="toggle-switch">
+                  <input
+                    id="fps-toggle"
+                    type="checkbox"
+                    checked={showFps}
+                    onChange={(e) => setShowFps(e.target.checked)}
+                  />
+                  <span className="toggle-slider"></span>
+                </label>
+                <div className="setting-hint">Display real-time frame rate in the HUD corner</div>
               </div>
               <div className="settings-actions">
                 <button className="big-btn secondary" onClick={() => setFov(65)}>Reset Default</button>

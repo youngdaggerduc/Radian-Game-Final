@@ -323,6 +323,40 @@
   100% { opacity: 0; transform: translate(0, -50%) scale(1.25); }
 }
 
+/* Targeting beam — thin pulsing line that sweeps across the screen toward
+   the projectile spawn point, ramping in intensity as the lead expires. */
+.proj-warn .beam {
+  position: absolute;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  background: linear-gradient(to right, rgba(255, 68, 255, 0.0), rgba(255, 68, 255, 0.95) 60%, #fff 100%);
+  box-shadow: 0 0 14px #ff44ff, 0 0 4px #fff;
+  border-radius: 2px;
+  pointer-events: none;
+  animation: projBeam 0.75s linear forwards;
+}
+.proj-warn.left  .beam { left:  72px; transform-origin: left center; }
+.proj-warn.right .beam { right: 72px; transform-origin: right center;
+  background: linear-gradient(to left, rgba(255, 68, 255, 0.0), rgba(255, 68, 255, 0.95) 60%, #fff 100%); }
+
+@keyframes projBeam {
+  0%   { width: 0; opacity: 0.0; }
+  20%  { width: 18vw; opacity: 0.55; }
+  60%  { width: 38vw; opacity: 0.85; }
+  85%  { width: 60vw; opacity: 1.0; filter: brightness(1.6); }
+  100% { width: 78vw; opacity: 0.0; filter: brightness(2.2); }
+}
+
+/* Triangle pulse ramp — the arrowhead pumps faster as the lead expires. */
+.proj-warn .tri {
+  animation: triPulse 0.25s ease-in-out infinite alternate;
+}
+@keyframes triPulse {
+  from { transform: scale(0.9); filter: brightness(0.9); }
+  to   { transform: scale(1.15); filter: brightness(1.35); }
+}
+
 /* Game-over recap stat grid */
 .rts-root #gameover-screen .recap {
   display: grid;
@@ -689,6 +723,62 @@
   letter-spacing: 1px;
   text-transform: uppercase;
 }
+.rts-root .toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 56px;
+  height: 28px;
+  margin-top: 4px;
+}
+.rts-root .toggle-switch input { opacity: 0; width: 0; height: 0; }
+.rts-root .toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: rgba(80, 30, 130, 0.65);
+  border: 2px solid rgba(170, 136, 221, 0.55);
+  border-radius: 28px;
+  transition: background 0.18s, border-color 0.18s;
+}
+.rts-root .toggle-slider::before {
+  content: '';
+  position: absolute;
+  height: 20px;
+  width: 20px;
+  left: 2px;
+  bottom: 2px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.18s;
+  box-shadow: 0 0 8px rgba(255, 233, 77, 0.55);
+}
+.rts-root .toggle-switch input:checked + .toggle-slider {
+  background: rgba(255, 233, 77, 0.35);
+  border-color: #ffe94d;
+}
+.rts-root .toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(28px);
+  background: #ffe94d;
+  box-shadow: 0 0 12px #ffe94d;
+}
+
+.rts-root #fps-counter {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  padding: 6px 12px;
+  font: 800 14px/1 "Segoe UI", sans-serif;
+  letter-spacing: 1.5px;
+  color: #ffe94d;
+  background: rgba(20, 5, 40, 0.72);
+  border: 1px solid rgba(255, 233, 77, 0.4);
+  border-radius: 6px;
+  text-shadow: 0 0 8px rgba(255, 233, 77, 0.5);
+  pointer-events: none;
+  user-select: none;
+}
+
 .rts-root .settings-actions {
   display: flex;
   gap: 14px;
