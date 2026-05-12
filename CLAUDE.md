@@ -217,3 +217,76 @@ When adding a new banner type, prefer reusing `.tier-banner` with a modifier cla
 - **React state** (`useState`): `showStart`, `showGameOver`, `foundation`. Anything that drives the start/game-over overlays or DOM-only inputs.
 - **Engine state** (`state` object inside the `useEffect` closure): everything per-frame. Mutating it never re-renders. HUD updates that fire every frame poke DOM nodes via refs (`scoreRef`, `heightNumRef`, `balanceNeedleRef`, etc.).
 - **`engineRef.current`** exposes `{ startGame, generateScoreCard }` to the React layer. Add new exposures here when you need React → engine calls.
+
+---
+
+## TODO — How to Play screen (per-mode pre-game briefing)
+
+### What it is
+After the player presses **Play** on the start screen, show a full-screen "How to Play" overlay **before** the game starts. The overlay is mode-specific: each foundation variant gets its own copy of the content. The player dismisses it with a **"Let's Build!"** button, which is what actually calls `startGame(foundation)`. The existing Play button should trigger the overlay instead of starting the game directly.
+
+### UX flow
+```
+Start screen  →  [Play]  →  How to Play overlay  →  [Let's Build!]  →  game starts
+```
+- Add `showHowToPlay` React state (boolean, default `false`).
+- `handleStart` currently calls `engineRef.current?.startGame(foundation)` and flips overlays. Change it so it sets `showHowToPlay = true` instead.
+- The overlay's "Let's Build!" button does the actual `startGame` call and sets `showHowToPlay = false` / `showStart = false`.
+- The overlay should also have a **Back** link (small, bottom) that returns to the start screen without starting — sets `showHowToPlay = false`.
+- The overlay sits above everything (high z-index) but uses the same `.screen` base class so the blur + dark backdrop is consistent.
+
+### Content — shared core (all modes)
+
+**Headline:** "How to Play"  
+**Subhead:** "Stack scaffolding pieces as high as you can"
+
+Controls:
+- **SPACE** (or tap on mobile/kiosk) — drop the swinging piece
+- **ESC** — pause / resume
+
+Scoring:
+- Land a piece and it scores points. The closer to center, the more points.
+- **Perfect** drop (< 8% overhang) → big bonus + star flash
+- **Combo** — chain perfect/good drops for a multiplier. Stalling for ~4 s breaks it.
+- Game ends if the piece misses the stack entirely, or the tower topples.
+
+**Prize callout** (prominent, styled differently — gold box or highlighted banner):
+> "Score **1,000+ points** and show your result at the Radian booth to claim your prize!"
+
+This callout must appear on every mode's how-to-play, not just standard. It's the conference-booth hook.
+
+### Content — per mode additions (shown below the core)
+
+**NARROW** (2× score)
+- Smaller base — pieces are harder to land clean.
+- Every point is worth 2× — high risk, high reward.
+
+**STANDARD** (1× score)
+- Balanced base. The classic experience.
+- No modifier — just skill.
+
+**WIDE** (0.7× score)
+- Wider base makes landing easier, but scores 0.7× — a friendlier intro.
+- Great for first-time players.
+
+**CHAOS** (3.5× score · red/warning theme)
+- 0.55× narrow base + 3.5× score multiplier.
+- Random events fire every 8–12 seconds: **SURGE** (swing speed spike), **FLIP** (angle inversion), **QUAKE** (tower lurch), plus wind gusts and logo projectiles.
+- The tower topples at 24° instead of 32° — chaos punishes lean harder.
+- Tip: watch for the on-screen arrows warning you of incoming events.
+
+**CONDEMNED** (5× score · hazard stripe / gold theme)
+- The hardest mode. 0.45× razor-thin base, 5× score multiplier.
+- **Gravity is 2.2×** — pieces fall fast, giving less time to react.
+- Pieces **physically tip** when off-center: a bad stack visibly warps the tower.
+- Events include everything in CHAOS plus **GRAVITY SPIKE** (3.5× gravity burst), **TILT STORM** (top 20 pieces rotate), and **WIRE SNAP** (swing amplitude blows out).
+- Topple threshold drops to 18°. One bad run of off-center stacks and it's over.
+
+### Implementation notes
+- Use the existing `foundation` React state to pick which content block to render.
+- The overlay does **not** need Three.js or engine access — it's pure React/CSS.
+- Reuse `.screen` base class + existing button styles (`.big-btn`). Add a `.how-to-play-screen` modifier for any layout specifics.
+- The prize callout box should use a distinct style — suggest a gold border + slightly opaque gold background, similar to the perfect-drop flash color (`#ffd700`), so it reads as "special" at a glance from across a booth table.
+- Keep the text tight — conference booth visitors will skim, not read. Short bullets, bold key terms, big prize callout.
+- The per-mode extra content should only show for the selected mode, not all five at once.
+- On very small screens (portrait kiosk mode) the overlay must be scrollable — use `overflow-y: auto` on the content container.

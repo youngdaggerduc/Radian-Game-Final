@@ -39,6 +39,23 @@ const COLORS = [
   0xff6600, 0x66ff33, 0x3388ff, 0xff0088,
 ]
 
+// Curated 3-colour palettes [frame, ledger, decking] — every combo is
+// pre-validated so pieces always look intentional rather than randomly clashing.
+const PIECE_PALETTES = [
+  [0xff3355, 0xffe94d, 0xff7700],  // red · yellow · orange
+  [0x00d4ff, 0x8855ff, 0x55ffee],  // cyan · purple · teal
+  [0x44ff77, 0x00d4ff, 0xffe94d],  // green · cyan · yellow
+  [0xff7700, 0xffe94d, 0xff3355],  // orange · yellow · red
+  [0xff55cc, 0x8855ff, 0xff3355],  // pink · purple · red
+  [0x3388ff, 0x00d4ff, 0x44ff77],  // blue · cyan · green
+  [0xff1166, 0xdd33ff, 0x8855ff],  // crimson · magenta · purple
+  [0xffe94d, 0x44ff77, 0x00ffbb],  // yellow · green · mint
+  [0xff6600, 0xff55cc, 0xffe94d],  // orange · pink · yellow
+  [0x00d4ff, 0x00ffbb, 0x3388ff],  // cyan · mint · blue
+  [0xff0088, 0xff55cc, 0x8855ff],  // hot-pink · pink · purple
+  [0x66ff33, 0xffe94d, 0x00d4ff],  // lime · yellow · cyan
+]
+
 // Per-piece difficulty bucket — drives the colored border on the next-piece preview
 // so players can read what's coming at a glance.
 const TYPE_DIFFICULTY = {
@@ -47,12 +64,23 @@ const TYPE_DIFFICULTY = {
   scaf_arch:       'med',
   scaf_cabin:      'med',
   scaf_double:     'med',
-  scaf_water_tank: 'med',
+  scaf_water_tank: 'hard',
   scaf_ladder:     'hard',
   scaf_flag:       'hard',
   scaf_crane_arm:  'hard',
   scaf_sign:       'hard',
   scaf_rocket_pad: 'hard',
+}
+const EASY_TYPES = TYPES.filter(t => TYPE_DIFFICULTY[t] === 'easy')
+const MED_TYPES  = TYPES.filter(t => TYPE_DIFFICULTY[t] === 'med')
+const HARD_TYPES = TYPES.filter(t => TYPE_DIFFICULTY[t] === 'hard')
+// Weighted random piece picker — easy pieces dominate early game, hard pieces ramp with tier.
+function pickPieceType(tier) {
+  const [we, wm, wh] = tier === 0 ? [5, 3, 1] : tier === 1 ? [3, 4, 3] : [1, 3, 5]
+  const r = Math.random() * (we + wm + wh)
+  if (r < we) return EASY_TYPES[Math.floor(Math.random() * EASY_TYPES.length)]
+  if (r < we + wm) return MED_TYPES[Math.floor(Math.random() * MED_TYPES.length)]
+  return HARD_TYPES[Math.floor(Math.random() * HARD_TYPES.length)]
 }
 
 // Score milestones — celebratory banner fires once per crossing.
@@ -63,20 +91,26 @@ const FOUNDATIONS = {
   narrow:   { scale: 0.65, mult: 2.0,  label: 'NARROW',   sub: '2× SCORE · BRUTAL' },
   standard: { scale: 1.0,  mult: 1.0,  label: 'STANDARD', sub: '1× SCORE · BALANCED' },
   wide:     { scale: 1.35, mult: 0.7,  label: 'WIDE',     sub: '0.7× SCORE · FRIENDLY' },
+  chaos:    { scale: 0.55, mult: 3.5,  label: 'CHAOS',      sub: '3.5× SCORE · MAXIMUM CARNAGE' },
+  condemned:{ scale: 0.45, mult: 5.0,  label: 'CONDEMNED',  sub: '5× SCORE · GRAVITY KILLS' },
 }
 
 export default function Game() {
   const canvasRef = useRef(null)
   const nextCanvasRef = useRef(null)
   const scoreRef = useRef(null)
+  const bestRef = useRef(null)
   const heightNumRef = useRef(null)
+  const chaosIndicatorRef = useRef(null)
   const comboTextRef = useRef(null)
   const balanceNeedleRef = useRef(null)
   const [showStart, setShowStart] = useState(true)
   const [showGameOver, setShowGameOver] = useState(false)
   const [showPause, setShowPause] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showGuide, setShowGuide] = useState(false)
   const [showLeaderboard, setShowLeaderboard] = useState(false)
+  const [leaderboardFromGameOver, setLeaderboardFromGameOver] = useState(false)
   const [foundation, setFoundation] = useState('standard')
   const [fov, setFov] = useState(65)
   // FPS counter — off by default; togglable in Settings. Persisted so booth
@@ -112,7 +146,7 @@ export default function Game() {
   useEffect(() => {
     const canvas = canvasRef.current
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1))
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
     renderer.setClearColor(0x120228)
@@ -170,7 +204,6 @@ export default function Game() {
     scene.add(rimLight)
 
     // Helpers
-    const rc = () => COLORS[Math.floor(Math.random() * COLORS.length)]
     const toonMat = (color, opts = {}) => new THREE.MeshLambertMaterial({ color, ...opts })
     // Single shared outline material — the back-side dark mesh shows up on every
     // box/cyl/cone/sphere in the scene (worksite props + every stacked tower
@@ -244,9 +277,8 @@ export default function Game() {
 
     function makePiece(type) {
       const g = new THREE.Group()
-      let a = rc(), b = rc(), c = rc()
-      while (b === a) b = rc()
-      while (c === a || c === b) c = rc()
+      const palette = PIECE_PALETTES[Math.floor(Math.random() * PIECE_PALETTES.length)]
+      const [a, b, c] = palette
       let pw = 4.4, ph = 2, pd = 2.6
 
       if (type === 'scaf_flat') {
@@ -302,17 +334,17 @@ export default function Game() {
         g.add(diag(-2.2, 0, 1, 4.4, 4, c)); g.add(diag(-2.2, 0, -1, 4.4, 4, c))
         pw = 4.6; ph = 6.3; pd = 2.2
       } else if (type === 'scaf_flag') {
-        for (const [x, z] of [[-1.8, 0.9], [1.8, 0.9], [-1.8, -0.9], [1.8, -0.9]]) g.add(pole(x, 0, z, 2.2, a))
-        g.add(ledger(0, 2.2, 0.9, 3.8, b)); g.add(ledger(0, 2.2, -0.9, 3.8, b))
-        for (const x of [-1.2, 0, 1.2]) g.add(transom(x, 2.2, 0, 1.9, b))
-        for (const x of [-1.1, -0.3, 0.5, 1.2]) g.add(board(x, 2.36, 0, 0.65, 1.8, c))
-        g.add(ledger(0, 1.1, 0.9, 3.8, a)); g.add(ledger(0, 1.1, -0.9, 3.8, a))
+        for (const [x, z] of [[-1.8, 1.1], [1.8, 1.1], [-1.8, -1.1], [1.8, -1.1]]) g.add(pole(x, 0, z, 2.2, a))
+        g.add(ledger(0, 2.2, 1.1, 3.8, b)); g.add(ledger(0, 2.2, -1.1, 3.8, b))
+        for (const x of [-1.2, 0, 1.2]) g.add(transom(x, 2.2, 0, 2.2, b))
+        for (const x of [-1.1, -0.3, 0.5, 1.2]) g.add(board(x, 2.36, 0, 0.65, 2.1, c))
+        g.add(ledger(0, 1.1, 1.1, 3.8, a)); g.add(ledger(0, 1.1, -1.1, 3.8, a))
         const mast = cyl(0.1, 0.14, 5.5, 6, b); mast.position.set(-0.6, 4.95, 0); g.add(mast)
         const flag = box(1.8, 1.0, 0.12, c); flag.position.set(0.3, 7, 0); g.add(flag)
         const stripe = box(1.82, 0.3, 0.13, a); stripe.position.set(0.3, 7.35, 0); g.add(stripe)
         const ball = sphere(0.2, c); ball.position.set(-0.6, 7.85, 0); g.add(ball)
         g.add(diag(-0.6, 2.2, 0, 1.2, 5.5, a))
-        pw = 3.8; ph = 8.0; pd = 1.9
+        pw = 3.8; ph = 8.0; pd = 2.2
       } else if (type === 'scaf_cabin') {
         for (const [x, z] of [[-2, 1], [2, 1], [-2, -1], [2, -1]]) g.add(pole(x, 0, z, 2.5, a))
         g.add(ledger(0, 2.5, 1, 4.3, b)); g.add(ledger(0, 2.5, -1, 4.3, b))
@@ -342,11 +374,11 @@ export default function Game() {
         g.add(diag(-2.2, 0, 1, 4.4, 4.5, c)); g.add(diag(-2.2, 0, -1, 4.4, 4.5, c))
         pw = 4.6; ph = 4.7; pd = 2.2
       } else if (type === 'scaf_crane_arm') {
-        for (const [x, z] of [[-1.8, 0.9], [1.8, 0.9], [-1.8, -0.9], [1.8, -0.9]]) g.add(pole(x, 0, z, 2.2, a))
-        g.add(ledger(0, 2.2, 0.9, 3.8, b)); g.add(ledger(0, 2.2, -0.9, 3.8, b))
-        for (const x of [-1.2, 0, 1.2]) g.add(transom(x, 2.2, 0, 1.9, b))
-        for (const x of [-1.1, -0.3, 0.5, 1.2]) g.add(board(x, 2.36, 0, 0.65, 1.8, c))
-        g.add(ledger(0, 1.1, 0.9, 3.8, a)); g.add(ledger(0, 1.1, -0.9, 3.8, a))
+        for (const [x, z] of [[-1.8, 1.1], [1.8, 1.1], [-1.8, -1.1], [1.8, -1.1]]) g.add(pole(x, 0, z, 2.2, a))
+        g.add(ledger(0, 2.2, 1.1, 3.8, b)); g.add(ledger(0, 2.2, -1.1, 3.8, b))
+        for (const x of [-1.2, 0, 1.2]) g.add(transom(x, 2.2, 0, 2.2, b))
+        for (const x of [-1.1, -0.3, 0.5, 1.2]) g.add(board(x, 2.36, 0, 0.65, 2.1, c))
+        g.add(ledger(0, 1.1, 1.1, 3.8, a)); g.add(ledger(0, 1.1, -1.1, 3.8, a))
         for (const [cx, cz] of [[0.2, 0.2], [-0.2, 0.2], [0.2, -0.2], [-0.2, -0.2]]) {
           const cp = cyl(0.1, 0.1, 4.5, 5, b); cp.position.set(cx, 4.45, cz); g.add(cp)
         }
@@ -357,34 +389,34 @@ export default function Game() {
         const cjib = box(1.4, 0.18, 0.18, a); cjib.position.set(-1.1, 6.8, 0); g.add(cjib)
         const hook = sphere(0.28, c); hook.position.set(3, 5.6, 0); g.add(hook)
         const hcable = cyl(0.06, 0.06, 1.3, 4, b); hcable.position.set(3, 6.25, 0); g.add(hcable)
-        pw = 4; ph = 7; pd = 1.9
+        pw = 4; ph = 7; pd = 2.2
       } else if (type === 'scaf_sign') {
-        for (const [x, z] of [[-2, 0.8], [2, 0.8], [-2, -0.8], [2, -0.8]]) g.add(pole(x, 0, z, 5.5, a))
-        g.add(ledger(0, 2.5, 0.8, 4.3, a)); g.add(ledger(0, 2.5, -0.8, 4.3, a))
-        for (const x of [-1.5, 0, 1.5]) g.add(transom(x, 2.5, 0, 1.7, a))
-        for (const x of [-1.4, -0.5, 0.4, 1.3]) g.add(board(x, 2.65, 0, 0.75, 1.6, c))
-        g.add(ledger(0, 1.2, 0.8, 4.3, b)); g.add(ledger(0, 1.2, -0.8, 4.3, b))
+        for (const [x, z] of [[-2, 1.1], [2, 1.1], [-2, -1.1], [2, -1.1]]) g.add(pole(x, 0, z, 5.5, a))
+        g.add(ledger(0, 2.5, 1.1, 4.3, a)); g.add(ledger(0, 2.5, -1.1, 4.3, a))
+        for (const x of [-1.5, 0, 1.5]) g.add(transom(x, 2.5, 0, 2.2, a))
+        for (const x of [-1.4, -0.5, 0.4, 1.3]) g.add(board(x, 2.65, 0, 0.75, 2.1, c))
+        g.add(ledger(0, 1.2, 1.1, 4.3, b)); g.add(ledger(0, 1.2, -1.1, 4.3, b))
         const frame = box(4.4, 2.4, 0.18, b); frame.position.set(0, 4.7, 0); g.add(frame)
         const panel = box(4, 2, 0.22, c); panel.position.set(0, 4.7, 0.1); g.add(panel)
         const stripe2 = box(4.1, 0.45, 0.23, a); stripe2.position.set(0, 4.4, 0.1); g.add(stripe2)
         for (const x of [-2, 2]) {
           const br = box(0.15, 0.15, 0.9, a); br.position.set(x, 4.7, 0.5); g.add(br)
         }
-        pw = 4.4; ph = 5.9; pd = 1.8
+        pw = 4.4; ph = 5.9; pd = 2.2
       } else if (type === 'scaf_water_tank') {
-        for (const [x, z] of [[-1.6, 0.9], [1.6, 0.9], [-1.6, -0.9], [1.6, -0.9]]) g.add(pole(x, 0, z, 4, a))
+        for (const [x, z] of [[-2.0, 1.1], [2.0, 1.1], [-2.0, -1.1], [2.0, -1.1]]) g.add(pole(x, 0, z, 4, a))
         for (const y of [1.5, 3]) {
-          g.add(ledger(0, y, 0.9, 3.4, b)); g.add(ledger(0, y, -0.9, 3.4, b))
-          for (const x of [-1.1, 0, 1.1]) g.add(transom(x, y, 0, 1.9, b))
+          g.add(ledger(0, y, 1.1, 4.3, b)); g.add(ledger(0, y, -1.1, 4.3, b))
+          for (const x of [-1.4, 0, 1.4]) g.add(transom(x, y, 0, 2.2, b))
         }
-        for (const x of [-1.1, -0.3, 0.5, 1.2]) g.add(board(x, 3.15, 0, 0.65, 1.8, c))
-        g.add(ledger(0, 0.75, 0.9, 3.4, a)); g.add(ledger(0, 2.2, 0.9, 3.4, a))
-        g.add(ledger(0, 0.75, -0.9, 3.4, a)); g.add(ledger(0, 2.2, -0.9, 3.4, a))
+        for (const x of [-1.4, -0.5, 0.4, 1.4]) g.add(board(x, 3.15, 0, 0.65, 2.1, c))
+        g.add(ledger(0, 0.75, 1.1, 4.3, a)); g.add(ledger(0, 2.2, 1.1, 4.3, a))
+        g.add(ledger(0, 0.75, -1.1, 4.3, a)); g.add(ledger(0, 2.2, -1.1, 4.3, a))
         const tank = cyl(1.1, 1.1, 1.6, 14, b); tank.position.set(0, 4.8, 0); g.add(tank)
         const lid = cyl(1.2, 1.2, 0.14, 14, c); lid.position.set(0, 5.65, 0); g.add(lid)
         const pipe = cyl(0.15, 0.15, 0.9, 6, a); pipe.position.set(0.9, 4.3, 0); g.add(pipe)
-        g.add(diag(-1.6, 0, 0.9, 3.2, 4, c))
-        pw = 3.6; ph = 5.8; pd = 2
+        g.add(diag(-2.0, 0, 1.1, 4.0, 4, c))
+        pw = 4.0; ph = 5.8; pd = 2.2
       } else if (type === 'scaf_rocket_pad') {
         for (const [x, z] of [[-2, 1], [2, 1], [-2, -1], [2, -1]]) g.add(pole(x, 0, z, 2.8, a))
         g.add(ledger(0, 2.8, 1, 4.3, b)); g.add(ledger(0, 2.8, -1, 4.3, b))
@@ -1200,6 +1232,10 @@ export default function Game() {
     scene.add(craneGroup)
     let craneCable = null
     function buildCrane(y) {
+      for (const child of craneGroup.children) {
+        if (child.geometry) child.geometry.dispose()
+        if (child.material) child.material.dispose()
+      }
       while (craneGroup.children.length) craneGroup.remove(craneGroup.children[0])
       const postH = 4
       const post = cyl(0.18, 0.22, postH, 7, 0x9966ff)
@@ -1372,16 +1408,24 @@ export default function Game() {
       }
       ;(shapes[type] || (() => { plank(14, 74, 44, '#ffe94d'); poles([18, 70], 74, 22, '#8855ff'); hbar(14, 74, 22, '#ff7700') }))()
 
-      ctx.fillStyle = 'rgba(255,255,255,0.45)'
-      ctx.font = 'bold 8px sans-serif'
+      ctx.fillStyle = 'rgba(10,0,25,0.65)'
+      ctx.fillRect(2, 75, 84, 12)
+      ctx.fillStyle = 'rgba(255,233,77,0.92)'
+      ctx.font = 'bold 9px sans-serif'
       ctx.textAlign = 'center'
-      ctx.fillText(type.replace('scaf_', '').replace(/_/g, ' ').toUpperCase(), 44, 85)
+      ctx.fillText(type.replace('scaf_', '').replace(/_/g, ' ').toUpperCase(), 44, 84)
     }
 
     // Game state
     const state = {
       gameActive: false,
       score: 0,
+      sessionBest: loadLocalLeaderboard()[0]?.score || 0,
+      chaosMode: false,
+      condemnedMode: false,
+      chaosTimer: 0,
+      chaosEvent: null,
+      chaosEventFrames: 0,
       combo: 0,
       stackedPieces: [],
       towerHeight: 0,
@@ -1490,6 +1534,61 @@ export default function Game() {
       setTimeout(() => el.remove(), 1500)
       state.screenShake = Math.max(state.screenShake, 0.5)
       state.flash = Math.max(state.flash, 0.35)
+    }
+
+    // Chaos event popup — slams into view like a tier banner but red and angry.
+    function spawnChaosEventPopup(text, color) {
+      const el = document.createElement('div')
+      el.className = 'tier-banner chaos-evt'
+      el.style.setProperty('--chaos-color', color)
+      el.textContent = text
+      document.body.appendChild(el)
+      setTimeout(() => el.remove(), 1800)
+    }
+
+    // Fire a random chaos/condemned event — called by the chaos timer in the animate loop.
+    function fireChaosEvent() {
+      const baseEvents = ['surge', 'flip', 'quake']
+      const condemnedExtras = ['gravspike', 'tiltstorm', 'wiresnap']
+      const pool = state.condemnedMode ? [...baseEvents, ...condemnedExtras] : baseEvents
+      const evt = pool[Math.floor(Math.random() * pool.length)]
+      state.chaosEvent = evt
+      state.chaosEventFrames = evt === 'surge' ? 240 : evt === 'gravspike' ? 180 : 60
+      state.flash = Math.max(state.flash, 0.5)
+      if (evt === 'surge') {
+        spawnChaosEventPopup('SPEED SURGE!', '#ff7700')
+      } else if (evt === 'flip') {
+        state.swingAngle += Math.PI + (Math.random() - 0.5) * 0.8
+        state.screenShake = Math.max(state.screenShake, 1.6)
+        spawnBurst(0, state.swingHeight || 10, 0, 30, [0xff3355, 0xffe94d, 0xff7700])
+        spawnChaosEventPopup('FLIP!', '#ff3355')
+      } else if (evt === 'quake') {
+        state.screenShake = Math.max(state.screenShake, 2.0)
+        state.towerLeanX += (Math.random() - 0.5) * 3.5
+        state.towerVelocity += (Math.random() - 0.5) * 0.45
+        spawnBurst(0, state.towerHeight / 2, 0, 20, [0xdd33ff, 0xff55cc, 0xff3355])
+        spawnChaosEventPopup('QUAKE!', '#dd33ff')
+      } else if (evt === 'gravspike') {
+        // Active for 180 frames — drop physics checks state.chaosEvent === 'gravspike'
+        spawnChaosEventPopup('GRAVITY SPIKE!', '#ff9900')
+        spawnBurst(0, state.towerHeight + 5, 0, 20, [0xff9900, 0xff3355, 0xffe94d])
+      } else if (evt === 'tiltstorm') {
+        // Physically tilt the top 20 stacked pieces — tower looks structurally unsound
+        const top = state.stackedPieces.slice(-20)
+        for (const piece of top) {
+          piece.rotation.z += (Math.random() - 0.5) * 0.22
+        }
+        state.screenShake = Math.max(state.screenShake, 1.5)
+        spawnBurst(0, state.towerHeight, 0, 22, [0xff55cc, 0xffe94d, 0xdd33ff])
+        spawnChaosEventPopup('TILT STORM!', '#ff55cc')
+      } else if (evt === 'wiresnap') {
+        // Blow out the swing amplitude and kick the angle randomly
+        state.swingAmp = Math.min(13, state.swingAmp + 2.5 + Math.random() * 2)
+        state.swingAngle += (Math.random() - 0.5) * 1.8
+        state.screenShake = Math.max(state.screenShake, 2.2)
+        spawnBurst(0, state.swingHeight || 12, 0, 28, [0xffe94d, 0xffffff, 0xff7700])
+        spawnChaosEventPopup('WIRE SNAP!', '#ffe94d')
+      }
     }
 
     // Checkpoint banner — when a 50/100/150 floor is crossed and a wide piece is queued.
@@ -1765,10 +1864,9 @@ export default function Game() {
         // match what they see, not a hidden inner hitbox.
         radius: 1.45,
         trail: [], // logo ghost copies, fade out behind the main sprite
-        // Smoke plume — additive puffs emitted every frame behind the projectile.
-        // Lighter, lasts longer than the logo ghosts and reads as exhaust rather
-        // than a brand echo. Each puff has its own opacity/scale lerp.
+        // Smoke plume — additive puffs emitted every N frames behind the projectile.
         smoke: [],
+        age: 0, // per-projectile frame counter — offsets emission so simultaneous projectiles don't all allocate on the same frame
         // Logo screen-space rotation accumulator — gives the brand a tumbling read.
         spin: Math.random() * Math.PI * 2,
         spinV: (dir < 0 ? -1 : 1) * (0.04 + Math.random() * 0.03),
@@ -1860,11 +1958,15 @@ export default function Game() {
     }
 
     function disposeProjectile(pj) {
+      // Dispose the three core sprite materials on the projectile group.
+      if (pj.halo) pj.halo.material.dispose()
+      if (pj.glow) pj.glow.material.dispose()
+      if (pj.logo) pj.logo.material.dispose()
       scene.remove(pj.mesh)
-      for (const t of pj.trail) scene.remove(t.sprite)
+      for (const t of pj.trail) { t.sprite.material.dispose(); scene.remove(t.sprite) }
       pj.trail.length = 0
       if (pj.smoke) {
-        for (const s of pj.smoke) scene.remove(s.sprite)
+        for (const s of pj.smoke) { s.sprite.material.dispose(); scene.remove(s.sprite) }
         pj.smoke.length = 0
       }
     }
@@ -2025,13 +2127,18 @@ export default function Game() {
         scene.remove(state.currentPiece)
         state.currentPiece = null
       }
-      let type = state.nextType || TYPES[Math.floor(Math.random() * TYPES.length)]
+      const tier0 = Math.floor(state.stackedPieces.length / 25)
+      const pickType = () => state.chaosMode
+        ? HARD_TYPES[Math.floor(Math.random() * HARD_TYPES.length)]
+        : pickPieceType(tier0)
+      let type = state.nextType || pickType()
       // Checkpoint floors override the next piece with a forgiving wide flat — a breather + victory moment.
-      if (state.checkpointPending) {
+      // Skipped in chaos mode — no mercy.
+      if (state.checkpointPending && !state.chaosMode) {
         state.checkpointPending = false
         type = 'scaf_flat'
       }
-      state.nextType = TYPES[Math.floor(Math.random() * TYPES.length)]
+      state.nextType = pickType()
       drawNextPiece(state.nextType)
       // Color-code the next-preview border by piece difficulty (easy/med/hard).
       if (nextCanvasRef.current) {
@@ -2096,7 +2203,7 @@ export default function Game() {
           rotV: dir * 0.06,
         })
         const tier = Math.floor((state.stackedPieces.length + 1) / 25)
-        const heightFactor = 1 + tier * 0.55
+        const heightFactor = 1 + tier * 0.42
         // The tower lurches hard in the direction of the missed piece.
         state.towerLeanX += dir * 7 * heightFactor
         state.towerVelocity += dir * 1.4 * heightFactor
@@ -2111,7 +2218,7 @@ export default function Game() {
 
       const tier = Math.floor((state.stackedPieces.length + 1) / 25)
       const isMiss = overhang > 0.55
-      const heightFactor = 1 + tier * 0.55
+      const heightFactor = 1 + tier * 0.42
 
       // Lean is driven by the center-to-center offset between the new piece
       // and the one below — exactly the "how far off centre" feel.
@@ -2144,6 +2251,10 @@ export default function Game() {
         void sc.offsetWidth
         sc.classList.add('pop')
         setTimeout(() => sc.classList.remove('pop'), 180)
+      }
+      if (state.score > state.sessionBest) {
+        state.sessionBest = state.score
+        if (bestRef.current) bestRef.current.textContent = 'BEST ' + state.sessionBest.toLocaleString()
       }
 
       const floors = state.stackedPieces.length + 1
@@ -2188,6 +2299,10 @@ export default function Game() {
       state.towerHeight += ph
       state.stackedPieces.push(p)
       towerGroup.add(p)
+      // Condemned: tilt landed pieces proportional to overhang — tower looks structurally unsound
+      if (state.condemnedMode && Math.abs(relX) > 0.1) {
+        p.rotation.z = -Math.max(-0.28, Math.min(0.28, relX * 0.22))
+      }
 
       // ── Tower decorations: stencils every 5 floors, flags every 10, hard-hat every 25 ──
       const floorN = state.stackedPieces.length
@@ -2235,16 +2350,29 @@ export default function Game() {
         spawnTierBanner(newTier)
       }
 
-      // Checkpoint floors — at 50/100/150 we queue an oversized forgiving piece.
+      // Checkpoint floors — at 50/100/150 we queue an oversized forgiving flat piece.
       if (floorN === 50 || floorN === 100 || floorN === 150) {
+        state.checkpointPending = true
         state.pendingCheckpointScale = 2.4
         spawnCheckpointBanner(floorN)
       }
 
       // Smooth per-floor swing scaling — faster ramp than before.
       const f = state.stackedPieces.length
-      state.swingSpeed = Math.min(0.095, 0.028 + f * 0.0013)
-      state.swingAmp = Math.min(8.2, 5.8 + f * 0.04)
+      if (state.condemnedMode) {
+        state.swingSpeed = Math.min(0.18, 0.080 + f * 0.0025)
+        state.swingAmp   = Math.min(11.0, 8.0   + f * 0.070)
+      } else if (state.chaosMode) {
+        state.swingSpeed = Math.min(0.14, 0.065 + f * 0.0018)
+        state.swingAmp   = Math.min(9.5,  7.2   + f * 0.055)
+      } else {
+        state.swingSpeed = Math.min(0.095, 0.040 + f * 0.0011)
+        state.swingAmp   = Math.min(8.2,  5.8   + f * 0.040)
+      }
+
+      // Schedule next piece from here — towerHeight is already updated so
+      // spawnNext always reads the correct height for crane placement.
+      setTimeout(() => { if (!cancelled && state.gameActive) spawnNext() }, 200)
     }
 
     function triggerGameOver() {
@@ -2253,12 +2381,16 @@ export default function Game() {
       if (state.dropPiece) { scene.remove(state.dropPiece); state.dropPiece = null }
       if (state.currentPiece) { scene.remove(state.currentPiece); state.currentPiece = null }
       // Hide the crane during the fall so it doesn't hover over the toppling tower.
+      for (const child of craneGroup.children) {
+        if (child.geometry) child.geometry.dispose()
+        if (child.material) child.material.dispose()
+      }
       while (craneGroup.children.length) craneGroup.remove(craneGroup.children[0])
       craneCable = null
       spawnBurst(0, state.towerHeight / 2, 0, 80, [0xff3355, 0xff7700, 0xffe94d, 0xff00ff, 0x44ffcc])
       state.screenShake = 2.5
       // Wait long enough for the tower to actually fall before showing the screen.
-      state.gameOverDelay = 160
+      state.gameOverDelay = 90
     }
 
     function startGame(foundation = 'standard') {
@@ -2268,17 +2400,26 @@ export default function Game() {
       state.fallingPieces = []
       for (const pj of state.projectiles) disposeProjectile(pj)
       state.projectiles = []
-      for (const sw of state.shockwaves) scene.remove(sw.mesh)
+      for (const sw of state.shockwaves) {
+        sw.mesh.geometry.dispose()
+        sw.mesh.material.dispose()
+        scene.remove(sw.mesh)
+      }
       state.shockwaves = []
       // Detach + clear any lingering impact decals from the previous run
       if (state.impactDecals) {
-        for (const d of state.impactDecals) d.piece.remove(d.sprite)
+        for (const d of state.impactDecals) {
+          d.sprite.material.dispose()
+          d.piece.remove(d.sprite)
+        }
       }
       state.impactDecals = []
       for (const pu of state.powerups) disposePowerup(pu)
       state.powerups = []
-      state.projectileTimer = 480 + Math.random() * 360 // generous grace period at start
-      state.powerupTimer = 900 + Math.random() * 600
+      state.projectileTimer = state.condemnedMode ? 30 + Math.random() * 30
+        : state.chaosMode ? 60 + Math.random() * 60
+        : 240 + Math.random() * 180
+      state.powerupTimer = 300 + Math.random() * 240
       state.towerHeight = 0
       state.towerLeanX = 0
       state.towerVelocity = 0
@@ -2301,7 +2442,21 @@ export default function Game() {
       // Reset milestones / buffs / wind / time-slow / checkpoint
       state.milestoneIdx = 0
       state.timeSlow = 0
-      state.wind = { active: false, dir: 0, frames: 0, offset: 0, timer: 1200 + Math.random() * 600, telegraphFrames: 0 }
+      state.condemnedMode = foundation === 'condemned'
+      state.chaosMode = foundation === 'chaos' || state.condemnedMode
+      state.chaosEvent = null
+      state.chaosEventFrames = 0
+      // Condemned fires events sooner and more often than chaos
+      state.chaosTimer = state.condemnedMode
+        ? 240 + Math.floor(Math.random() * 120)  // first event 4-6s in
+        : 360 + Math.floor(Math.random() * 120)  // first event 6-8s in
+      state.wind = {
+        active: false, dir: 0, frames: 0, offset: 0,
+        timer: state.condemnedMode ? 90 + Math.random() * 90
+          : state.chaosMode ? 180 + Math.random() * 180
+          : 1200 + Math.random() * 600,
+        telegraphFrames: 0,
+      }
       state.buffWide = false
       state.buffFreeze = 0
       state.buffAutoPerfect = false
@@ -2310,8 +2465,8 @@ export default function Game() {
       towerGroup.rotation.z = 0
       state.score = 0
       state.combo = 0
-      state.swingSpeed = 0.028
-      state.swingAmp = 5.8
+      state.swingSpeed = state.condemnedMode ? 0.080 : state.chaosMode ? 0.065 : 0.040
+      state.swingAmp   = state.condemnedMode ? 8.0   : state.chaosMode ? 7.2   : 5.8
       state.swingAngle = Math.random() * Math.PI * 2
       state.dropping = false
       state.toppling = false
@@ -2319,6 +2474,7 @@ export default function Game() {
       state.flash = 0
       state.dropPiece = null
       state.gameOverDelay = 0
+      state.frameN = 0
       // Initial camera placement — Z scales with viewport aspect so the start
       // shot is framed consistently across screen shapes. The animate loop will
       // ease toward its dynamic target from here.
@@ -2326,12 +2482,22 @@ export default function Game() {
       camera.position.set(0, 14, 20 * state.aspectScale)
       camera.lookAt(0, 2, 0)
       if (scoreRef.current) scoreRef.current.textContent = '0'
+      const storedBest = loadLocalLeaderboard()[0]?.score || 0
+      if (storedBest > state.sessionBest) state.sessionBest = storedBest
+      if (bestRef.current) bestRef.current.textContent = state.sessionBest ? 'BEST ' + state.sessionBest.toLocaleString() : 'BEST —'
       if (heightNumRef.current) heightNumRef.current.textContent = '0'
       if (comboTextRef.current) comboTextRef.current.style.opacity = '0'
+      if (chaosIndicatorRef.current) {
+        chaosIndicatorRef.current.style.display = state.chaosMode ? 'flex' : 'none'
+        chaosIndicatorRef.current.className = state.condemnedMode ? 'condemned' : ''
+        chaosIndicatorRef.current.textContent = state.condemnedMode ? '⚠ CONDEMNED ⚠' : '⚡ CHAOS MODE ⚡'
+      }
       setShowStart(false)
       setShowGameOver(false)
       state.gameActive = true
-      state.nextType = TYPES[Math.floor(Math.random() * TYPES.length)]
+      state.nextType = state.chaosMode
+        ? HARD_TYPES[Math.floor(Math.random() * HARD_TYPES.length)]
+        : TYPES[Math.floor(Math.random() * TYPES.length)]
       const base = makePiece('scaf_flat')
       // Apply foundation scale to the base — narrow base = harder, wide = easier landing target.
       base.scale.set(fnd.scale, 1, fnd.scale)
@@ -2373,7 +2539,7 @@ export default function Game() {
       }
       state.dropVel = 0
       state.currentPiece = null
-      setTimeout(spawnNext, 450)
+      // spawnNext is scheduled by landPiece after towerHeight is updated
     }
 
     // Compose a shareable PNG: game canvas snapshot + branding + recap stats.
@@ -2514,14 +2680,19 @@ export default function Game() {
     // Main loop
     let raf = 0
     let cancelled = false
-    function animate() {
+    // Fixed-timestep physics: always advance at 60 ticks/sec regardless of display
+    // refresh rate. On a 144Hz screen, rAF fires 2.4× per physics tick — the while
+    // loop below runs 0 or 1 times most frames, 2 on occasional catch-up frames.
+    const PHYSICS_STEP = 1000 / 60
+    let physicsAccum = 0
+    let lastPhysicsTime = 0
+    function animate(now) {
       if (cancelled) return
       raf = requestAnimationFrame(animate)
       // FPS sampler — closes a ~500ms window and writes to the HUD ref. We only
       // do the DOM update when the window closes (twice a second), so this is
       // effectively free even when the counter is visible.
       if (fpsSampler.visible) {
-        const now = performance.now()
         if (fpsSampler.windowStart === 0) fpsSampler.windowStart = now
         fpsSampler.frames++
         const elapsed = now - fpsSampler.windowStart
@@ -2546,6 +2717,14 @@ export default function Game() {
         renderer.render(scene, camera)
         return
       }
+      // Accumulate real time; run physics in fixed 16.667ms steps so game speed
+      // is identical on 60Hz and 144Hz displays. Cap dt at 50ms to prevent a
+      // catch-up burst after tab-switch or window drag.
+      const dt = lastPhysicsTime > 0 ? Math.min(now - lastPhysicsTime, 50) : 0
+      lastPhysicsTime = now
+      physicsAccum += dt
+      while (physicsAccum >= PHYSICS_STEP) {
+        physicsAccum -= PHYSICS_STEP
       state.frameN++
 
       // ── Worksite ambience: tape sway, bg crane drift, dust motes, worker head-tilt, spotlight follow ──
@@ -2605,6 +2784,24 @@ export default function Game() {
         sw.rotation.x = Math.sin(state.frameN * 0.012 + ph * 0.7) * 0.025
       }
 
+      // Chaos events — periodic random events that spike difficulty.
+      if (state.chaosMode && state.gameActive) {
+        if (state.chaosEventFrames > 0) {
+          state.chaosEventFrames--
+          if (state.chaosEventFrames === 0) state.chaosEvent = null
+        } else {
+          state.chaosTimer--
+          if (state.chaosTimer <= 0) {
+            fireChaosEvent()
+            state.chaosTimer = state.condemnedMode
+              ? 360 + Math.floor(Math.random() * 180)  // 6-9s in condemned
+              : 480 + Math.floor(Math.random() * 240)  // 8-12s in chaos
+          }
+        }
+        // Constant low-level ambient jitter — barely perceptible but adds unease.
+        camera.position.x += (Math.random() - 0.5) * 0.05
+      }
+
       // Wind gusts — telegraphed sustained drift on the swing X.
       // Smoothly ease the wind offset toward target so onset/decay feel like air, not a snap.
       {
@@ -2616,7 +2813,7 @@ export default function Game() {
             if (w.frames <= 0) w.active = false
           } else if (w.telegraphFrames === 0) {
             w.timer--
-            if (w.timer <= 0 && state.stackedPieces.length >= 8) {
+            if (w.timer <= 0 && (state.chaosMode || state.stackedPieces.length >= 8)) {
               w.dir = Math.random() < 0.5 ? -1 : 1
               w.telegraphFrames = 50
               spawnWindWarning(w.dir)
@@ -2626,8 +2823,10 @@ export default function Game() {
                 w.active = true
                 w.frames = 220 + Math.floor(Math.random() * 100) // ~3.5–5.3s
               }, 800)
-              // Reset cooldown — next gust 18–32s away
-              w.timer = 1080 + Math.floor(Math.random() * 840)
+              // Reset cooldown — chaos: 6-12s; normal: 18-32s
+              w.timer = state.chaosMode
+                ? 360 + Math.floor(Math.random() * 360)
+                : 1080 + Math.floor(Math.random() * 840)
             }
           }
         }
@@ -2641,7 +2840,8 @@ export default function Game() {
         if (state.buffFreeze > 0) {
           state.buffFreeze--
         } else {
-          state.swingAngle += state.swingSpeed
+          const surgeMult = (state.chaosMode && state.chaosEvent === 'surge') ? 2.2 : 1
+          state.swingAngle += state.swingSpeed * surgeMult
         }
         let sx = Math.sin(state.swingAngle) * state.swingAmp + state.wind.offset
         // Keep the swinging piece on-screen — wider pieces (WIDE buff, checkpoint
@@ -2664,6 +2864,14 @@ export default function Game() {
         state.currentPiece.position.set(sx, state.swingHeight, 0)
         state.currentPiece.rotation.z = Math.sin(state.swingAngle) * 0.22
         state.currentPiece.rotation.y = state.frameN * 0.01
+        // Auto-perfect buff — pulse magenta emissive so players know the drop will snap.
+        if (state.buffAutoPerfect) {
+          const pulse = 0.35 + Math.sin(state.frameN * 0.22) * 0.25
+          state.currentPiece.traverse((obj) => {
+            if (obj.isMesh && obj.material && obj.material.emissive)
+              obj.material.emissive.setRGB(pulse, 0, pulse * 0.75)
+          })
+        }
         if (craneCable && craneGroup.children.length >= 2) {
           const armY = craneGroup.children[1].position.y
           const pieceTopY = state.swingHeight + state.currentPiece.userData.ph * 0.5 + 0.1
@@ -2708,7 +2916,7 @@ export default function Game() {
       // Combo decay — stalling kills the combo so the player has to keep moving.
       if (state.gameActive && state.combo > 0) {
         state.framesSinceLand++
-        if (state.framesSinceLand > 240) { // ~4s without a successful land
+        if (state.framesSinceLand > (state.chaosMode ? 120 : 240)) { // chaos: ~2s; normal: ~4s
           state.combo = 0
           if (comboTextRef.current) comboTextRef.current.style.opacity = '0'
         }
@@ -2716,9 +2924,11 @@ export default function Game() {
 
       // Drop — falls in slow-mo when state.timeSlow is active (set on near-miss in drop()).
       if (state.dropPiece) {
-        const slowMul = state.timeSlow > 0 ? 0.42 : 1
+        // Condemned disables the near-miss slow-mo — no mercy
+        const slowMul = (state.timeSlow > 0 && !state.condemnedMode) ? 0.42 : 1
         if (state.timeSlow > 0) state.timeSlow--
-        state.dropVel += 0.055 * slowMul
+        const gravMult = state.condemnedMode ? (state.chaosEvent === 'gravspike' ? 3.5 : 2.2) : 1
+        state.dropVel += 0.055 * slowMul * gravMult
         state.dropPiece.position.y -= state.dropVel * slowMul
         if (state.frameN % 3 === 0) {
           spawnBurst(state.dropPiece.position.x, state.dropPiece.position.y + state.dropPiece.userData.ph * 0.5, 0, 3, [0xcc88ff, 0xffffff, 0xff88ff])
@@ -2736,7 +2946,7 @@ export default function Game() {
 
       // Tower physics — stepped tier (every 25 floors)
       const tier = Math.floor((state.stackedPieces.length || 1) / 25)
-      const hFactor = 1 + tier * 0.55
+      const hFactor = 1 + tier * 0.42
       if (state.toppling) {
         // No restoring force, no damping — gravity-style angular accel so the tower actually falls.
         const dir = Math.sign(state.towerAngle) || Math.sign(state.towerLeanX) || 1
@@ -2815,7 +3025,7 @@ export default function Game() {
       }
       towerGroup.rotation.z = state.towerAngle * (Math.PI / 180)
       // Topple threshold: forgiving at start (32°), tightens 5° per tier, never below 14°.
-      const toppleThresh = Math.max(14, 32 - tier * 5)
+      const toppleThresh = Math.max(14, (state.condemnedMode ? 18 : state.chaosMode ? 24 : 32) - tier * 4)
       if (state.gameActive && Math.abs(state.towerAngle) > toppleThresh) triggerGameOver()
 
       // Balance needle — combines instantaneous lean with the windowed-bias average so
@@ -2849,13 +3059,17 @@ export default function Game() {
           // Floor 0:    320 + random*360 = 5.3–11.3s between shots
           // Tier 4+:    220 + random*360 = 3.7–9.7s
           // Tier 8+:    180 + random*360 = 3.0–9.0s (capped — never faster than this)
-          state.projectileTimer = Math.max(180, 320 - t * 25) + Math.random() * 360
+          state.projectileTimer = state.chaosMode
+            ? Math.max(60, 120 - t * 10) + Math.random() * 90
+            : Math.max(180, 320 - t * 25) + Math.random() * 360
         }
         for (let i = state.projectileWarnings.length - 1; i >= 0; i--) {
           const w = state.projectileWarnings[i]
           w.framesLeft--
           if (w.framesLeft <= 0) {
-            spawnProjectile(w.dir, w.absY)
+            if (!state.chaosMode || state.projectiles.length < 2) {
+              spawnProjectile(w.dir, w.absY)
+            }
             state.projectileWarnings.splice(i, 1)
           }
         }
@@ -2885,9 +3099,10 @@ export default function Game() {
         pj.spin += pj.spinV
         pj.logo.material.rotation = pj.spin
 
-        // Smoke plume — emit a puff every frame slightly behind the projectile,
-        // jittered perpendicular to motion so the plume reads as turbulent.
-        {
+        pj.age++
+        // Smoke plume — every 2 frames (every 3 in chaos) to cap SpriteMaterial allocations.
+        const smokeEvery = state.chaosMode ? 3 : 2
+        if (pj.age % smokeEvery === 0) {
           const back = -Math.sign(pj.vx) || 1
           const jitter = (Math.random() - 0.5) * 0.6
           const puff = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -2916,11 +3131,13 @@ export default function Game() {
             growth: 1.04 + Math.random() * 0.02,
           })
         }
-        // Fade + drift smoke puffs.
+        // Fade + drift smoke puffs. Chaos: faster fade = fewer alive sprites at once.
+        const smokeFade = state.chaosMode ? 0.04 : 0.022
         for (let j = pj.smoke.length - 1; j >= 0; j--) {
           const sm = pj.smoke[j]
-          sm.opacity -= 0.022
+          sm.opacity -= smokeFade
           if (sm.opacity <= 0) {
+            sm.sprite.material.dispose()
             scene.remove(sm.sprite)
             pj.smoke.splice(j, 1)
           } else {
@@ -2931,8 +3148,9 @@ export default function Game() {
           }
         }
 
-        // Trail — drop a fading logo ghost every 3 frames behind the projectile.
-        if (state.frameN % 3 === 0) {
+        // Trail — drop a fading logo ghost; every 5 frames normally, every 8 in chaos.
+        const trailEvery = state.chaosMode ? 8 : 5
+        if (pj.age % trailEvery === 0) {
           const ghost = new THREE.Sprite(new THREE.SpriteMaterial({
             map: logoTex,
             transparent: true,
@@ -2952,6 +3170,7 @@ export default function Game() {
           const tr = pj.trail[j]
           tr.opacity -= 0.07
           if (tr.opacity <= 0) {
+            tr.sprite.material.dispose()
             scene.remove(tr.sprite)
             pj.trail.splice(j, 1)
           } else {
@@ -2979,8 +3198,8 @@ export default function Game() {
         state.powerupTimer -= 1
         if (state.powerupTimer <= 0 && state.powerups.length === 0) {
           spawnPowerup()
-          // Fairly rare: 18–32s between pickups
-          state.powerupTimer = 1080 + Math.floor(Math.random() * 840)
+          // 10–18s between pickups — short enough that most runs get several
+          state.powerupTimer = 600 + Math.floor(Math.random() * 480)
         }
       }
       for (let i = state.powerups.length - 1; i >= 0; i--) {
@@ -3012,6 +3231,8 @@ export default function Game() {
         sw.mesh.scale.multiplyScalar(1.18)
         sw.mesh.material.opacity = Math.max(0, sw.life * 0.95)
         if (sw.life <= 0) {
+          sw.mesh.geometry.dispose()
+          sw.mesh.material.dispose()
           scene.remove(sw.mesh)
           state.shockwaves.splice(i, 1)
         }
@@ -3024,6 +3245,7 @@ export default function Game() {
         const d = state.impactDecals[i]
         d.life -= 0.012
         if (d.life <= 0) {
+          d.sprite.material.dispose()
           d.piece.remove(d.sprite)
           state.impactDecals.splice(i, 1)
         } else {
@@ -3059,6 +3281,8 @@ export default function Game() {
         p.mesh.rotation.z += p.spin.z
         p.mesh.material.opacity = Math.max(0, p.life)
         if (p.life <= 0) {
+          p.mesh.geometry.dispose()
+          p.mesh.material.dispose()
           scene.remove(p.mesh)
           particles.splice(i, 1)
         }
@@ -3129,10 +3353,10 @@ export default function Game() {
         if (state.flash < 0.02) state.flash = 0
       }
       if (state.frameN % 2 === 0) {
-        const t = state.frameN * 0.003
-        const baseR = 0.10 + Math.sin(t) * 0.03
-        const baseG = 0.02
-        const baseB = 0.28 + Math.sin(t * 0.7) * 0.06
+        const t = state.frameN * (state.condemnedMode ? 0.018 : state.chaosMode ? 0.010 : 0.003)
+        const baseR = state.condemnedMode ? 0.30 + Math.sin(t) * 0.14 : state.chaosMode ? 0.22 + Math.sin(t) * 0.10 : 0.10 + Math.sin(t) * 0.03
+        const baseG = state.condemnedMode ? 0.00 : state.chaosMode ? 0.01 + Math.sin(t * 1.3) * 0.01 : 0.02
+        const baseB = state.condemnedMode ? 0.00 + Math.sin(t * 0.7) * 0.02 : state.chaosMode ? 0.04 + Math.sin(t * 0.9) * 0.03 : 0.28 + Math.sin(t * 0.7) * 0.06
         const f = state.flash
         _scratchClearColor.setRGB(
           baseR + (1 - baseR) * f,
@@ -3163,6 +3387,7 @@ export default function Game() {
         }
       }
 
+      } // end fixed-timestep while loop
       renderer.render(scene, camera)
     }
     animate()
@@ -3191,17 +3416,20 @@ export default function Game() {
   const handleResume = () => {
     setShowPause(false)
     setShowSettings(false)
+    setShowGuide(false)
     engineRef.current?.setPaused(false)
   }
   const handleReset = () => {
     setShowPause(false)
     setShowSettings(false)
+    setShowGuide(false)
     engineRef.current?.setPaused(false)
     engineRef.current?.startGame(foundation)
   }
   const handleQuit = () => {
     setShowPause(false)
     setShowSettings(false)
+    setShowGuide(false)
     setShowGameOver(false)
     engineRef.current?.setPaused(false)
     setShowStart(true)
@@ -3213,7 +3441,7 @@ export default function Game() {
     if (!eng?.setPauseListener) return
     eng.setPauseListener((paused) => {
       setShowPause(paused)
-      if (!paused) setShowSettings(false)
+      if (!paused) { setShowSettings(false); setShowGuide(false) }
     })
     return () => eng.setPauseListener?.(null)
   }, [])
@@ -3279,7 +3507,7 @@ export default function Game() {
         <div id="score-panel">
           <div className="game-title">Radian Tower Stacker</div>
           <div id="score" ref={scoreRef}>0</div>
-          <div id="pts-label">Height</div>
+          <div id="best-score" ref={bestRef}>BEST —</div>
           <div id="combo-text" ref={comboTextRef}>COMBO!</div>
         </div>
         <div id="height-badge">
@@ -3296,6 +3524,9 @@ export default function Game() {
             <div id="balance-fill"></div>
             <div id="balance-needle" ref={balanceNeedleRef}></div>
           </div>
+        </div>
+        <div id="chaos-indicator" ref={chaosIndicatorRef} style={{display:'none'}}>
+          <span>⚡</span> CHAOS MODE <span>⚡</span>
         </div>
         <div id="hint"><span className="key">SPACE</span> to drop · tap anywhere</div>
 
@@ -3334,6 +3565,7 @@ export default function Game() {
                   {Object.entries(FOUNDATIONS).map(([key, fnd]) => (
                     <button
                       key={key}
+                      data-key={key}
                       className={'foundation-btn' + (foundation === key ? ' selected' : '')}
                       onClick={() => setFoundation(key)}
                     >
@@ -3358,14 +3590,29 @@ export default function Game() {
             <img className="brand-logo" src="/logo.png" alt="Radian" />
             <div className="brand-wordmark">RADIAN</div>
           </div>
-          <div className="screen-title">{showSettings ? <>Set<span className="yl">tings</span></> : <>Pa<span className="yl">used</span></>}</div>
-          {!showSettings && (
+          <div className="screen-title">
+            {showSettings ? <>Set<span className="yl">tings</span></>
+              : showGuide ? <>Mode <span className="yl">Guide</span></>
+              : <>Pa<span className="yl">used</span></>}
+          </div>
+          {!showSettings && !showGuide && (
             <div className="pause-actions">
               <button className="big-btn" onClick={handleResume}>Resume</button>
+              {(foundation === 'chaos' || foundation === 'condemned') && (
+                <button className="big-btn secondary" onClick={() => setShowGuide(true)}>
+                  {foundation === 'condemned' ? '⚠ Condemned Guide' : '⚡ Chaos Guide'}
+                </button>
+              )}
               <button className="big-btn secondary" onClick={() => setShowSettings(true)}>Settings</button>
               <button className="big-btn secondary" onClick={handleReset}>Reset Run</button>
               <button className="big-btn secondary" onClick={handleQuit}>Quit to Menu</button>
             </div>
+          )}
+          {showGuide && (
+            <ModeGuide
+              mode={foundation}
+              onBack={() => setShowGuide(false)}
+            />
           )}
           {showSettings && (
             <div className="settings-panel">
@@ -3407,7 +3654,7 @@ export default function Game() {
               </div>
             </div>
           )}
-          <div className="screen-sub">ESC to {showSettings ? 'go back' : 'resume'}</div>
+          <div className="screen-sub">ESC to {showSettings || showGuide ? 'go back' : 'resume'}</div>
         </div>
       )}
       {showGameOver && (
@@ -3444,7 +3691,7 @@ export default function Game() {
           )}
           <div className="gameover-actions">
             <button className="big-btn" onClick={handleStart}>Build Again</button>
-            <button className="big-btn secondary" onClick={() => setShowLeaderboard(true)}>Leaderboard</button>
+            <button className="big-btn secondary" onClick={() => { setLeaderboardFromGameOver(true); setShowLeaderboard(true) }}>Leaderboard</button>
             <button className="big-btn secondary" onClick={handleSaveCard}>Save Score Card</button>
             <button className="big-btn secondary" onClick={handleNewUser}>New User</button>
           </div>
@@ -3456,7 +3703,13 @@ export default function Game() {
 
       {showLeaderboard && (
         <LeaderboardScreen
-          onClose={() => setShowLeaderboard(false)}
+          onClose={() => { setShowLeaderboard(false); setLeaderboardFromGameOver(false) }}
+          onGoHome={leaderboardFromGameOver ? () => {
+            setShowLeaderboard(false)
+            setLeaderboardFromGameOver(false)
+            setShowGameOver(false)
+            setShowStart(true)
+          } : null}
           highlightId={lastEntryId}
         />
       )}
@@ -3464,10 +3717,49 @@ export default function Game() {
   )
 }
 
+const CHAOS_GUIDE = [
+  { icon: '⚡', title: 'SURGE', desc: 'Swing speed explodes to 2.2× for 4 seconds. Every frame counts.' },
+  { icon: '🔄', title: 'FLIP', desc: 'The swing angle instantly inverts — piece jolts to the opposite side of its arc.' },
+  { icon: '💥', title: 'QUAKE', desc: 'The tower lurches sideways. Correct your stack fast or the lean topples you.' },
+  { icon: '🌊', title: 'WIND GUSTS', desc: 'A yellow arrow warns of incoming wind. It drifts your piece left or right for several seconds.' },
+  { icon: '🎯', title: 'LOGO SHOTS', desc: 'The Radian logo fires across the screen. A hit throws your piece off-arc.' },
+  { icon: '📐', title: 'BASE', desc: '0.55× narrow foundation — every piece is harder to land. 3.5× score multiplier.' },
+]
+const CONDEMNED_GUIDE = [
+  { icon: '🌍', title: 'GRAVITY', desc: '2.2× drop speed at all times. Pieces fall fast — you have less time to correct.' },
+  { icon: '💀', title: 'GRAVITY SPIKE', desc: 'Gravity hits 3.5× for 3 seconds. Drop timing becomes brutal.' },
+  { icon: '🏗️', title: 'TILT STORM', desc: 'The top 20 stacked pieces rotate. Your tower visibly warps — balance is already compromised.' },
+  { icon: '🔗', title: 'WIRE SNAP', desc: 'Swing amplitude blows out suddenly. The piece swings wildly across a massive arc.' },
+  ...CHAOS_GUIDE.slice(0, 3),  // also has Surge, Flip, Quake
+  { icon: '↗️', title: 'TIPPING', desc: 'Landed pieces physically tilt based on overhang. Off-center stacks visibly lean — topple threshold is just 18°.' },
+  { icon: '📐', title: 'BASE', desc: '0.45× razor-narrow foundation — the smallest in the game. 5× score multiplier.' },
+]
+
+function ModeGuide({ mode, onBack }) {
+  const items = mode === 'condemned' ? CONDEMNED_GUIDE : CHAOS_GUIDE
+  const accent = mode === 'condemned' ? '#ffc800' : '#ff3355'
+  return (
+    <div className="mode-guide">
+      <div className="mode-guide-list">
+        {items.map((item) => (
+          <div key={item.title} className="guide-row">
+            <span className="guide-icon">{item.icon}</span>
+            <div className="guide-text">
+              <span className="guide-title" style={{ color: accent }}>{item.title}</span>
+              <span className="guide-desc">{item.desc}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <button className="big-btn secondary" style={{ marginTop: 18 }} onClick={onBack}>Back</button>
+    </div>
+  )
+}
+
 // Leaderboard modal — pulls local + (best-effort) online entries and renders a
 // ranked table. Highlights the row matching `highlightId` so a player who just
 // finished a run can spot themselves.
-function LeaderboardScreen({ onClose, highlightId }) {
+function LeaderboardScreen({ onClose, onGoHome, highlightId }) {
   const [entries, setEntries] = useState(() => loadLocalLeaderboard())
   const [online, setOnline] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -3547,6 +3839,9 @@ function LeaderboardScreen({ onClose, highlightId }) {
 
       <div className="leaderboard-actions">
         <button className="big-btn" onClick={onClose}>Back</button>
+        {onGoHome && (
+          <button className="big-btn secondary" onClick={onGoHome}>Home Screen</button>
+        )}
         {!showClearPrompt && (
           <button
             className="big-btn secondary"
@@ -3598,9 +3893,7 @@ function PlayerForm({ onSubmit }) {
     const cleanEmail = email.trim()
     const cleanPhone = phone.trim()
     if (!cleanName) return setError('Please enter your name.')
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return setError('Please enter a valid email.')
-    const digits = cleanPhone.replace(/\D/g, '')
-    if (digits.length < 7) return setError('Please enter a valid phone number.')
+    if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return setError('Please enter a valid email.')
     setError('')
     onSubmit({ name: cleanName.toUpperCase().slice(0, 20), email: cleanEmail, phone: cleanPhone })
   }
@@ -3608,7 +3901,7 @@ function PlayerForm({ onSubmit }) {
   return (
     <form className="player-form" onSubmit={handleSubmit}>
       <div className="player-form-title">Register to Play</div>
-      <div className="player-form-sub">We'll save your score under this profile</div>
+      <div className="player-form-sub">Name required · Email & phone optional</div>
       <div className="player-form-row">
         <label className="player-form-label" htmlFor="pf-name">Name</label>
         <input
@@ -3623,7 +3916,7 @@ function PlayerForm({ onSubmit }) {
         />
       </div>
       <div className="player-form-row">
-        <label className="player-form-label" htmlFor="pf-email">Email</label>
+        <label className="player-form-label" htmlFor="pf-email">Email <span style={{opacity:0.55,fontWeight:400}}>(optional)</span></label>
         <input
           id="pf-email"
           className="player-form-input"
@@ -3635,7 +3928,7 @@ function PlayerForm({ onSubmit }) {
         />
       </div>
       <div className="player-form-row">
-        <label className="player-form-label" htmlFor="pf-phone">Phone</label>
+        <label className="player-form-label" htmlFor="pf-phone">Phone <span style={{opacity:0.55,fontWeight:400}}>(optional)</span></label>
         <input
           id="pf-phone"
           className="player-form-input"
