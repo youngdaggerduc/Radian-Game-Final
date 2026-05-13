@@ -105,6 +105,7 @@ export default function Game() {
   const comboTextRef = useRef(null)
   const balanceNeedleRef = useRef(null)
   const [showStart, setShowStart] = useState(true)
+  const [showHowToPlay, setShowHowToPlay] = useState(false)
   const [showGameOver, setShowGameOver] = useState(false)
   const [showPause, setShowPause] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -888,9 +889,56 @@ export default function Game() {
       return g
     }
 
+    // Sky brand layer — giant translucent RADIAN wordmark planes that drift
+    // diagonally behind the tower, plus faded ghost logo sprites floating in
+    // the sky. Same vibe as the start-screen DOM backdrop, lifted into 3D so
+    // it works inside the game itself.
+    // Builds a wide marquee plane in the style of the start-screen DOM backdrop.
+    // The text is drawn as a long repeating strip across a wide canvas (like
+    // DOM `text.repeat(N)`), then mapped 1:1 onto the plane and scrolled via
+    // texture.offset.x — RepeatWrapping makes the loop seamless. Each text
+    // copy is large enough to read clearly.
+    function makeSkyWordmark(text, fontSize, color, alpha) {
+      // Repeat the text inside the canvas so the marquee reads continuously.
+      const repeatCount = 6
+      const padded = text + '   '
+      const stripText = padded.repeat(repeatCount)
+      const c = document.createElement('canvas')
+      c.width = 4096; c.height = 256
+      const ctx = c.getContext('2d')
+      ctx.clearRect(0, 0, c.width, c.height)
+      ctx.font = `900 ${fontSize}px "Segoe UI", sans-serif`
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.fillStyle = color
+      ctx.shadowColor = color; ctx.shadowBlur = 30
+      ctx.fillText(stripText, c.width / 2, c.height / 2)
+      const tex = new THREE.CanvasTexture(c)
+      tex.colorSpace = THREE.SRGBColorSpace
+      tex.wrapS = THREE.RepeatWrapping
+      tex.wrapT = THREE.ClampToEdgeWrapping
+      // Tile the canvas twice horizontally so the wide plane stays packed with
+      // readable text instances rather than stretching a single copy huge.
+      tex.repeat.set(2, 1)
+      tex.anisotropy = 4
+      // Plane stretches well past either screen edge (camera FOV at z=-40 sees
+      // roughly ±50 units wide; 240 covers it with margin even when the camera
+      // dollies up the tower).
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(240, 5),
+        new THREE.MeshBasicMaterial({
+          map: tex,
+          transparent: true,
+          opacity: alpha,
+          depthWrite: false,
+        })
+      )
+      mesh.userData.tex = tex
+      return mesh
+    }
+
     // Handles for props that animate per-frame (drum spin, beacon sweep, sandwich-board sway).
     // Populated inside the World block below; consumed in animate().
-    const sceneAnimated = { cementMixer: null, beacon: null, sandwichBoard: null }
+    const sceneAnimated = { cementMixer: null, beacon: null, sandwichBoard: null, skyBrand: null }
 
     // World — Radian construction site
     {
@@ -1106,6 +1154,7 @@ export default function Game() {
         scene.add(sw)
         sceneAnimated.sandwichBoard = sw
       }
+
     }
 
     // ── Caution tape strung between the safety-fence posts (sways in the animate loop) ──
@@ -1664,6 +1713,62 @@ export default function Game() {
     const texLoader = new THREE.TextureLoader()
     const logoTex = texLoader.load('/logo.png')
     logoTex.colorSpace = THREE.SRGBColorSpace
+
+    // ── Sky brand layer ───────────────────────────────────────
+    // Giant tilted RADIAN wordmark planes + ghost logo sprites drifting far
+    // behind the tower. Same diagonal-marquee + drifting ghost-logo vibe as
+    // the start-screen DOM backdrop, lifted into the 3D scene so the in-game
+    // background carries the brand too.
+    {
+      const layer = new THREE.Group()
+      const strips = [
+        { text: 'RADIAN SCAFFOLDING ★ BUILT TO STAND ★', y:  4, dir:  1, speed: 0.0008, color: '#ffd700', alpha: 0.32 },
+        { text: 'RADIAN SCAFFOLDING ★ BUILT TO STAND ★', y: 13, dir: -1, speed: 0.0007, color: '#ff7700', alpha: 0.28 },
+        { text: 'RADIAN SCAFFOLDING ★ BUILT TO STAND ★', y: 23, dir:  1, speed: 0.0009, color: '#ffe94d', alpha: 0.26 },
+        { text: 'RADIAN SCAFFOLDING ★ BUILT TO STAND ★', y: 35, dir: -1, speed: 0.00075, color: '#ffaa33', alpha: 0.24 },
+        { text: 'RADIAN SCAFFOLDING ★ BUILT TO STAND ★', y: 49, dir:  1, speed: 0.0008, color: '#ffd700', alpha: 0.22 },
+        { text: 'RADIAN SCAFFOLDING ★ BUILT TO STAND ★', y: 65, dir: -1, speed: 0.0007, color: '#ffaa33', alpha: 0.20 },
+        { text: 'RADIAN SCAFFOLDING ★ BUILT TO STAND ★', y: 82, dir:  1, speed: 0.0008, color: '#ffd700', alpha: 0.18 },
+      ]
+      const stripMeshes = []
+      for (const s of strips) {
+        const m = makeSkyWordmark(s.text, 130, s.color, s.alpha)
+        // Centered horizontally — texture is wide enough to span the screen.
+        m.position.set(0, s.y, -40)
+        m.rotation.z = -0.24
+        layer.add(m)
+        stripMeshes.push({ tex: m.userData.tex, dir: s.dir, speed: s.speed })
+      }
+      // Drifting ghost logos — translucent sprites of the company logo.
+      const ghostLogos = []
+      for (let i = 0; i < 10; i++) {
+        const ghostMat = new THREE.SpriteMaterial({
+          map: logoTex,
+          transparent: true,
+          opacity: 0.28,
+          depthWrite: false,
+        })
+        const sp = new THREE.Sprite(ghostMat)
+        const baseX = (Math.random() - 0.5) * 80
+        const baseY = 6 + Math.random() * 80
+        sp.position.set(baseX, baseY, -38)
+        const sc = 5 + Math.random() * 6
+        sp.scale.set(sc, sc, 1)
+        layer.add(sp)
+        ghostLogos.push({
+          sprite: sp,
+          baseX, baseY,
+          phaseX: Math.random() * Math.PI * 2,
+          phaseY: Math.random() * Math.PI * 2,
+          phaseP: Math.random() * Math.PI * 2,
+          ampX: 1.5 + Math.random() * 1.8,
+          ampY: 1.0 + Math.random() * 1.4,
+          baseAlpha: 0.20 + Math.random() * 0.14,
+        })
+      }
+      scene.add(layer)
+      sceneAnimated.skyBrand = { layer, stripMeshes, ghostLogos }
+    }
 
     // Bigger, brighter glow — this is the company logo, it should be the most
     // visually loud thing on screen short of the tower itself.
@@ -2439,6 +2544,11 @@ export default function Game() {
       const fnd = FOUNDATIONS[foundation] || FOUNDATIONS.standard
       state.foundation = foundation
       state.scoreMult = fnd.mult
+      // Branded sky marquees only on the calmer foundations. Narrow / chaos /
+      // condemned keep the blank background so the harder modes read clean.
+      if (sceneAnimated.skyBrand) {
+        sceneAnimated.skyBrand.layer.visible = (foundation === 'standard' || foundation === 'wide')
+      }
       // Reset milestones / buffs / wind / time-slow / checkpoint
       state.milestoneIdx = 0
       state.timeSlow = 0
@@ -2774,6 +2884,23 @@ export default function Game() {
         // so it never goes fully dark — gives a sweeping-beam read.
         const faceT = (Math.cos(b.lensPivot.rotation.y) + 1) * 0.5 // 0..1
         b.light.intensity = 0.35 + faceT * 0.95
+      }
+
+      // Sky brand layer — wordmark strips drift seamlessly via texture.offset
+      // (RepeatWrapping makes it loop without a visible seam). Ghost logos
+      // float in a slow lissajous orbit with pulsing alpha. Same vibe as the
+      // title-screen DOM backdrop.
+      if (sceneAnimated.skyBrand) {
+        const sb = sceneAnimated.skyBrand
+        for (const s of sb.stripMeshes) {
+          s.tex.offset.x = (s.tex.offset.x + s.dir * s.speed) % 1
+        }
+        for (const g of sb.ghostLogos) {
+          g.sprite.position.x = g.baseX + Math.sin(state.frameN * 0.006 + g.phaseX) * g.ampX
+          g.sprite.position.y = g.baseY + Math.sin(state.frameN * 0.008 + g.phaseY) * g.ampY
+          const pulse = 0.5 + 0.5 * Math.sin(state.frameN * 0.012 + g.phaseP)
+          g.sprite.material.opacity = g.baseAlpha + pulse * 0.14
+        }
       }
 
       // Sandwich board — gentle 2-axis sway. Light wind on a freestanding sign.
@@ -3408,6 +3535,12 @@ export default function Game() {
     if (!player) return  // form is gating the Play button; this is a safety net
     setShowPause(false)
     setShowSettings(false)
+    setShowHowToPlay(true)
+  }
+  const handleBeginRun = () => {
+    setShowHowToPlay(false)
+    setShowStart(false)
+    setShowGameOver(false)
     engineRef.current?.startGame(foundation)
   }
   const handleSaveCard = () => {
@@ -3543,6 +3676,7 @@ export default function Game() {
 
       {showStart && (
         <div className="screen" id="start-screen">
+          <BrandBackdrop />
           <div className="brand-block">
             <img className="brand-logo" src="/logo.png" alt="Radian" />
             <div className="brand-wordmark">RADIAN</div>
@@ -3583,6 +3717,13 @@ export default function Game() {
           )}
           <div className="brand-footer">A Radian Scaffolding experience</div>
         </div>
+      )}
+      {showHowToPlay && (
+        <HowToPlayScreen
+          mode={foundation}
+          onStart={handleBeginRun}
+          onBack={() => setShowHowToPlay(false)}
+        />
       )}
       {showPause && (
         <div className="screen" id="pause-screen">
@@ -3717,6 +3858,36 @@ export default function Game() {
   )
 }
 
+// Per-mode add-on shown beneath the shared core briefing on the How-to-Play overlay.
+// Keep these tight — booth visitors will skim, not read.
+const HOW_TO_PLAY_MODE = {
+  narrow: {
+    badge: 'NARROW · 2× SCORE',
+    accent: '#ff9933',
+    blurb: 'Smaller base — pieces are harder to land clean. Every point is worth 2×. High risk, high reward.',
+  },
+  standard: {
+    badge: 'STANDARD · 1× SCORE',
+    accent: '#00d4ff',
+    blurb: 'Balanced base. The classic experience. No modifier — just skill.',
+  },
+  wide: {
+    badge: 'WIDE · 0.7× SCORE',
+    accent: '#44ff77',
+    blurb: 'Wider base makes landing easier, but scores 0.7×. A friendlier intro — great for first-time players.',
+  },
+  chaos: {
+    badge: 'CHAOS · 3.5× SCORE',
+    accent: '#ff3355',
+    blurb: '0.55× narrow base + 3.5× score. Random events fire every 8–12 s: SURGE, FLIP, QUAKE, wind gusts and logo projectiles. Topple at 24°. Watch the on-screen arrows — they warn you.',
+  },
+  condemned: {
+    badge: 'CONDEMNED · 5× SCORE',
+    accent: '#ffc800',
+    blurb: '0.45× razor-thin base, 5× score, 2.2× gravity. Events include GRAVITY SPIKE, TILT STORM, WIRE SNAP plus everything in Chaos. Pieces physically tip when off-center. Topple at 18°.',
+  },
+}
+
 const CHAOS_GUIDE = [
   { icon: '⚡', title: 'SURGE', desc: 'Swing speed explodes to 2.2× for 4 seconds. Every frame counts.' },
   { icon: '🔄', title: 'FLIP', desc: 'The swing angle instantly inverts — piece jolts to the opposite side of its arc.' },
@@ -3734,6 +3905,85 @@ const CONDEMNED_GUIDE = [
   { icon: '↗️', title: 'TIPPING', desc: 'Landed pieces physically tilt based on overhang. Off-center stacks visibly lean — topple threshold is just 18°.' },
   { icon: '📐', title: 'BASE', desc: '0.45× razor-narrow foundation — the smallest in the game. 5× score multiplier.' },
 ]
+
+// Pre-game briefing shown after Play is pressed. Per-mode add-on appears below the
+// shared core. The prize callout is the conference-booth hook — must show on every mode.
+const PRIZE_THRESHOLD = { narrow: 1000, standard: 1000, wide: 1000, chaos: 2000, condemned: 2500 }
+
+// Branded animated backdrop used behind overlay screens. Scrolling diagonal
+// "RADIAN SCAFFOLDING" hazard marquees + a few drifting ghost logos. Pure
+// pointer-events: none so the screen content stays interactive.
+function BrandBackdrop() {
+  const strip = 'RADIAN SCAFFOLDING ★ BUILT TO STAND ★ '
+  return (
+    <div className="brand-backdrop" aria-hidden="true">
+      <div className="bb-strip bb-strip-1">{strip.repeat(8)}</div>
+      <div className="bb-strip bb-strip-2">{strip.repeat(8)}</div>
+      <div className="bb-strip bb-strip-3">{strip.repeat(8)}</div>
+      <div className="bb-strip bb-strip-4">{strip.repeat(8)}</div>
+      <img className="bb-logo bb-logo-1" src="/logo.png" alt="" />
+      <img className="bb-logo bb-logo-2" src="/logo.png" alt="" />
+      <img className="bb-logo bb-logo-3" src="/logo.png" alt="" />
+      <div className="bb-vignette" />
+    </div>
+  )
+}
+
+function HowToPlayScreen({ mode, onStart, onBack }) {
+  const m = HOW_TO_PLAY_MODE[mode] || HOW_TO_PLAY_MODE.standard
+  const prize = PRIZE_THRESHOLD[mode] ?? 1000
+  return (
+    <div className="screen how-to-play-screen">
+      <BrandBackdrop />
+      <div className="brand-block small">
+        <img className="brand-logo" src="/logo.png" alt="Radian" />
+        <div className="brand-wordmark">RADIAN</div>
+      </div>
+      <div className="how-to-play-content">
+        <div className="screen-title">How to <span className="yl">Play</span></div>
+        <div className="screen-sub">Stack scaffolding pieces as high as you can</div>
+
+        <div className="htp-section">
+          <div className="htp-section-title">Controls</div>
+          <ul className="htp-list">
+            <li><b>SPACE</b> (or tap) — drop the swinging piece</li>
+            <li><b>ESC</b> — pause / resume</li>
+          </ul>
+        </div>
+
+        <div className="htp-section">
+          <div className="htp-section-title">Scoring</div>
+          <ul className="htp-list">
+            <li>Land a piece — closer to center scores more.</li>
+            <li><b>Perfect drop</b> (&lt; 8% overhang) → big bonus + star flash.</li>
+            <li><b>Combo</b> — chain perfect/good drops for a multiplier. Stalling ~4 s breaks it.</li>
+            <li>Game ends if a piece misses the stack or the tower topples.</li>
+          </ul>
+        </div>
+
+        <div className="htp-mode-block" style={{ borderColor: m.accent }}>
+          <div className="htp-mode-badge" style={{ color: m.accent, textShadow: `0 0 12px ${m.accent}88` }}>
+            {m.badge}
+          </div>
+          <div className="htp-mode-blurb">{m.blurb}</div>
+        </div>
+
+        <div className="htp-prize">
+          <div className="htp-prize-icon">🏆</div>
+          <div className="htp-prize-text">
+            Score <b>{prize.toLocaleString()}+ points</b> and show your result at the <b>Radian booth</b> to claim your prize!
+            <div className="htp-prize-note">Limit one prize per person.</div>
+          </div>
+        </div>
+
+        <div className="htp-actions">
+          <button className="big-btn" onClick={onStart}>Let's Build!</button>
+        </div>
+        <button className="link-btn htp-back" onClick={onBack}>← Back to foundation</button>
+      </div>
+    </div>
+  )
+}
 
 function ModeGuide({ mode, onBack }) {
   const items = mode === 'condemned' ? CONDEMNED_GUIDE : CHAOS_GUIDE

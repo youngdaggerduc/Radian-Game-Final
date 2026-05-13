@@ -1247,3 +1247,232 @@
   .rts-root .screen { padding: 8vh 6vw; justify-content: center; }
   .rts-root .game-over-title, .rts-root .start-title { font-size: clamp(36px, 6vw, 72px); }
 }
+
+/* Animated branded backdrop — diagonal hazard-tape marquees + drifting ghost
+   logos. Lives inside .screen containers, behind the content. pointer-events:
+   none so it never blocks interaction. Hover/animations are GPU-cheap
+   transforms + opacity — no layout thrash. */
+.rts-root .brand-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.rts-root .brand-backdrop > * { pointer-events: none; }
+.rts-root .brand-backdrop .bb-strip {
+  position: absolute;
+  left: -50%;
+  width: 200%;
+  white-space: nowrap;
+  font-weight: 900;
+  font-size: 64px;
+  letter-spacing: 8px;
+  text-transform: uppercase;
+  font-family: 'Segoe UI', sans-serif;
+  color: rgba(255, 233, 77, 0.085);
+  text-shadow:
+    0 0 18px rgba(255, 119, 0, 0.18),
+    3px 3px 0 rgba(0, 0, 0, 0.25);
+  will-change: transform;
+}
+.rts-root .brand-backdrop .bb-strip-1 {
+  top: 8%;
+  transform: rotate(-14deg);
+  animation: bb-scroll-r 36s linear infinite;
+  color: rgba(255, 215, 0, 0.10);
+}
+.rts-root .brand-backdrop .bb-strip-2 {
+  top: 34%;
+  transform: rotate(-14deg);
+  animation: bb-scroll-l 48s linear infinite;
+  color: rgba(255, 119, 0, 0.085);
+  font-size: 72px;
+}
+.rts-root .brand-backdrop .bb-strip-3 {
+  top: 60%;
+  transform: rotate(-14deg);
+  animation: bb-scroll-r 42s linear infinite;
+  color: rgba(255, 233, 77, 0.075);
+  font-size: 56px;
+}
+.rts-root .brand-backdrop .bb-strip-4 {
+  top: 84%;
+  transform: rotate(-14deg);
+  animation: bb-scroll-l 56s linear infinite;
+  color: rgba(255, 200, 0, 0.06);
+  font-size: 60px;
+}
+@keyframes bb-scroll-r {
+  from { transform: translateX(-25%) rotate(-14deg); }
+  to   { transform: translateX(25%) rotate(-14deg); }
+}
+@keyframes bb-scroll-l {
+  from { transform: translateX(25%) rotate(-14deg); }
+  to   { transform: translateX(-25%) rotate(-14deg); }
+}
+
+.rts-root .brand-backdrop .bb-logo {
+  position: absolute;
+  width: 180px;
+  height: 180px;
+  opacity: 0.08;
+  filter: drop-shadow(0 0 24px rgba(255, 119, 0, 0.4));
+  will-change: transform, opacity;
+}
+.rts-root .brand-backdrop .bb-logo-1 {
+  top: 12%; left: 8%;
+  animation: bb-drift-a 14s ease-in-out infinite, bb-pulse 5s ease-in-out infinite;
+}
+.rts-root .brand-backdrop .bb-logo-2 {
+  bottom: 14%; right: 10%;
+  width: 220px; height: 220px;
+  animation: bb-drift-b 18s ease-in-out infinite, bb-pulse 7s ease-in-out infinite 1.2s;
+}
+.rts-root .brand-backdrop .bb-logo-3 {
+  top: 46%; right: 22%;
+  width: 130px; height: 130px;
+  opacity: 0.06;
+  animation: bb-drift-c 22s ease-in-out infinite, bb-pulse 9s ease-in-out infinite 0.5s;
+}
+@keyframes bb-drift-a {
+  0%, 100% { transform: translate(0, 0) rotate(-6deg); }
+  50%      { transform: translate(28px, -22px) rotate(6deg); }
+}
+@keyframes bb-drift-b {
+  0%, 100% { transform: translate(0, 0) rotate(8deg); }
+  50%      { transform: translate(-34px, 26px) rotate(-4deg); }
+}
+@keyframes bb-drift-c {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  50%      { transform: translate(18px, 18px) rotate(-10deg); }
+}
+@keyframes bb-pulse {
+  0%, 100% { opacity: 0.07; }
+  50%      { opacity: 0.14; }
+}
+.rts-root .brand-backdrop .bb-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 0%, rgba(18, 2, 40, 0.55) 80%);
+}
+
+/* Ensure overlay content sits above the backdrop. */
+.rts-root #start-screen > *:not(.brand-backdrop),
+.rts-root .how-to-play-screen > *:not(.brand-backdrop) {
+  position: relative;
+  z-index: 1;
+}
+
+/* How-to-Play overlay — pre-game briefing. Sits above the start screen so the
+   foundation choice stays visible by tapping Back. */
+.rts-root .how-to-play-screen {
+  z-index: 35;
+  padding: 4vh 6vw;
+  justify-content: flex-start;
+  overflow-y: auto;
+}
+.rts-root .how-to-play-content {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  margin-top: 12px;
+}
+.rts-root .how-to-play-screen .screen-title { font-size: clamp(36px, 6vw, 64px); }
+.rts-root .htp-section {
+  width: 100%;
+  background: rgba(40, 8, 80, 0.55);
+  border: 1px solid rgba(170, 136, 221, 0.25);
+  border-radius: 14px;
+  padding: 14px 22px;
+}
+.rts-root .htp-section-title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #ffe94d;
+  margin-bottom: 8px;
+}
+.rts-root .htp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  color: #e8dfff;
+  font-size: 16px;
+  line-height: 1.55;
+}
+.rts-root .htp-list li { padding: 3px 0; }
+.rts-root .htp-list b { color: #fff; }
+
+.rts-root .htp-mode-block {
+  width: 100%;
+  background: rgba(20, 4, 50, 0.7);
+  border: 2px solid #aa88dd;
+  border-radius: 14px;
+  padding: 14px 22px;
+}
+.rts-root .htp-mode-badge {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.rts-root .htp-mode-blurb {
+  color: #e8dfff;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* Prize callout — the conference-booth hook. Gold border + translucent gold
+   wash mirrors the perfect-drop flash color so it reads as "special" at a glance. */
+.rts-root .htp-prize {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.22), rgba(255, 119, 0, 0.18));
+  border: 2px solid #ffd700;
+  border-radius: 14px;
+  padding: 14px 22px;
+  box-shadow: 0 0 28px rgba(255, 215, 0, 0.35);
+}
+.rts-root .htp-prize-icon { font-size: 34px; }
+.rts-root .htp-prize-text {
+  color: #fff;
+  font-size: 16px;
+  line-height: 1.45;
+  letter-spacing: 0.5px;
+}
+.rts-root .htp-prize-text b { color: #ffe94d; }
+.rts-root .htp-prize-note {
+  margin-top: 4px;
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #ffd700cc;
+}
+
+.rts-root .htp-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 6px;
+}
+.rts-root .htp-back {
+  margin-top: 8px;
+  color: #aa88dd;
+  font-size: 13px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+@media (max-width: 700px) {
+  .rts-root .how-to-play-content { gap: 12px; }
+  .rts-root .htp-section, .rts-root .htp-mode-block, .rts-root .htp-prize { padding: 12px 16px; }
+  .rts-root .htp-list { font-size: 15px; }
+  .rts-root .htp-prize-text { font-size: 14px; }
+}
