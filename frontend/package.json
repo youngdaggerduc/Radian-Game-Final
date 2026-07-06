@@ -4,12 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/black-ops-one": "^5.2.8",
+    "@fontsource/saira": "^5.2.11",
+    "@fontsource/saira-condensed": "^5.2.8",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "three": "^0.184.0"

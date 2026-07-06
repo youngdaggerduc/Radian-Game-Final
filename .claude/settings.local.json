@@ -10,7 +10,8 @@
       "Bash(./venv/Scripts/python -c \"from app.main import app; print\\('backend import OK'\\)\")",
       "Bash(npm run *)",
       "Bash(git add *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(grep *)"
     ]
   }
 }

@@ -9,7 +9,7 @@ import {
   submitOnline,
 } from './leaderboard'
 
-const FOUNDATION_LABEL = { narrow: 'NARROW', standard: 'STANDARD', wide: 'WIDE' }
+const FOUNDATION_LABEL = { narrow: 'NARROW', standard: 'STANDARD', wide: 'WIDE', chaos: 'CHAOS', condemned: 'CONDEMNED' }
 function formatDate(iso) {
   if (!iso) return ''
   try {
@@ -83,16 +83,23 @@ function pickPieceType(tier) {
   return HARD_TYPES[Math.floor(Math.random() * HARD_TYPES.length)]
 }
 
+// Canvas-texture font stacks — mirror the CSS design tokens. Black Ops One
+// ships only weight 400, so canvas font strings omit the weight for it.
+const F_DISPLAY = '"Black Ops One", "Arial Black", sans-serif'
+const F_COND = '"Saira Condensed", "Arial Narrow", sans-serif'
+const F_BODY = '"Saira", "Segoe UI", sans-serif'
+
 // Score milestones — celebratory banner fires once per crossing.
 const SCORE_MILESTONES = [2500, 5000, 10000, 25000, 50000, 100000, 250000, 500000]
 
 // Foundation choice — base scale + score multiplier.
+// `diff` (1–5) drives the chevron difficulty meter on the foundation cards.
 const FOUNDATIONS = {
-  narrow:   { scale: 0.65, mult: 2.0,  label: 'NARROW',   sub: '2× SCORE · BRUTAL' },
-  standard: { scale: 1.0,  mult: 1.0,  label: 'STANDARD', sub: '1× SCORE · BALANCED' },
-  wide:     { scale: 1.35, mult: 0.7,  label: 'WIDE',     sub: '0.7× SCORE · FRIENDLY' },
-  chaos:    { scale: 0.55, mult: 3.5,  label: 'CHAOS',      sub: '3.5× SCORE · MAXIMUM CARNAGE' },
-  condemned:{ scale: 0.45, mult: 5.0,  label: 'CONDEMNED',  sub: '5× SCORE · GRAVITY KILLS' },
+  narrow:   { scale: 0.65, mult: 2.0,  diff: 3, label: 'NARROW',   sub: '2× SCORE · BRUTAL' },
+  standard: { scale: 1.0,  mult: 1.0,  diff: 2, label: 'STANDARD', sub: '1× SCORE · BALANCED' },
+  wide:     { scale: 1.35, mult: 0.7,  diff: 1, label: 'WIDE',     sub: '0.7× SCORE · FRIENDLY' },
+  chaos:    { scale: 0.55, mult: 3.5,  diff: 4, label: 'CHAOS',      sub: '3.5× SCORE · MAXIMUM CARNAGE' },
+  condemned:{ scale: 0.45, mult: 5.0,  diff: 5, label: 'CONDEMNED',  sub: '5× SCORE · GRAVITY KILLS' },
 }
 
 export default function Game() {
@@ -147,10 +154,39 @@ export default function Game() {
   useEffect(() => {
     const canvas = canvasRef.current
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1))
+    // 1.5 keeps text/HUD crisp on high-DPI booth screens; the outline art style
+    // hides aliasing well so full devicePixelRatio isn't worth the fill cost.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
     renderer.setClearColor(0x120228)
+
+    // Kiosk insurance: an 8-hour booth session will occasionally lose the GL
+    // context (driver reset, GPU pressure). Without this the canvas goes
+    // permanently black; a reload restores everything (leaderboard + player
+    // profile live in localStorage).
+    const onContextLost = (e) => {
+      e.preventDefault()
+      window.location.reload()
+    }
+    canvas.addEventListener('webglcontextlost', onContextLost)
+
+    // Single parent for every transient DOM popup (banners, pts popups,
+    // warnings). All spawners append here instead of document.body, so unmount
+    // tears every in-flight popup down in one call and the body stays clean.
+    const popupLayer = document.createElement('div')
+    popupLayer.id = 'popup-layer'
+    document.body.appendChild(popupLayer)
+
+    // Haptic cue on touch hardware (tablet/phone kiosks); silently a no-op on
+    // desktop. Pattern arrays are ms [buzz, gap, buzz, ...].
+    const buzz = (pattern) => { try { navigator.vibrate?.(pattern) } catch { /* noop */ } }
+
+    // Optional QR code for the score card — drop a qr.png (pointing at the
+    // company site) into frontend/public/ and it appears on the card
+    // automatically; if the file is missing the card renders without it.
+    const qrImg = new Image()
+    qrImg.src = '/qr.png'
 
     const scene = new THREE.Scene()
     scene.fog = new THREE.FogExp2(0x120228, 0.018)
@@ -223,29 +259,66 @@ export default function Game() {
       m.updateMatrix()
       mesh.add(m)
     }
+    // Shared-geometry cache — box/cyl/cone/sphere are called hundreds of times
+    // per piece build with a small set of distinct dimensions. Caching by the
+    // exact parameter tuple means every identical primitive shares one GPU
+    // buffer. Cached geometries are flagged `userData.shared` so the disposal
+    // helper below never frees them mid-session; they're released once on
+    // unmount.
+    const geoCache = new Map()
+    const cachedGeo = (key, make) => {
+      let g = geoCache.get(key)
+      if (!g) {
+        g = make()
+        g.userData.shared = true
+        geoCache.set(key, g)
+      }
+      return g
+    }
     const box = (w, h, d, col) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), toonMat(col))
+      const m = new THREE.Mesh(cachedGeo(`b${w},${h},${d}`, () => new THREE.BoxGeometry(w, h, d)), toonMat(col))
       m.castShadow = true
       outline(m)
       return m
     }
     const cyl = (rt, rb, h, segs, col) => {
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, segs), toonMat(col))
+      const m = new THREE.Mesh(cachedGeo(`c${rt},${rb},${h},${segs}`, () => new THREE.CylinderGeometry(rt, rb, h, segs)), toonMat(col))
       m.castShadow = true
       outline(m)
       return m
     }
     const cone = (r, h, segs, col) => {
-      const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, segs), toonMat(col))
+      const m = new THREE.Mesh(cachedGeo(`k${r},${h},${segs}`, () => new THREE.ConeGeometry(r, h, segs)), toonMat(col))
       m.castShadow = true
       outline(m)
       return m
     }
     const sphere = (r, col) => {
-      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 7), toonMat(col))
+      const m = new THREE.Mesh(cachedGeo(`s${r}`, () => new THREE.SphereGeometry(r, 10, 7)), toonMat(col))
       m.castShadow = true
       outline(m)
       return m
+    }
+
+    // Textures shared across many sprites/meshes — the disposal helper must
+    // never free these when tearing down an individual object.
+    const sharedTextures = new Set()
+
+    // Deep-dispose an Object3D tree: frees geometries (except cached shared
+    // ones) and materials (except the shared outline material), plus any
+    // per-object canvas textures. This is what keeps GPU memory flat across a
+    // full day of booth runs — previously old tower pieces were only removed
+    // from the scene graph and their buffers leaked.
+    const disposeObject3D = (root) => {
+      root.traverse((obj) => {
+        if (obj.geometry && !obj.geometry.userData?.shared) obj.geometry.dispose()
+        const mats = Array.isArray(obj.material) ? obj.material : obj.material ? [obj.material] : []
+        for (const m of mats) {
+          if (m === outlineMat) continue
+          if (m.map && !sharedTextures.has(m.map)) m.map.dispose()
+          m.dispose()
+        }
+      })
     }
 
     const pole = (x, y, z, h, col) => {
@@ -460,6 +533,19 @@ export default function Game() {
       return g
     }
 
+    // Mount-time canvas textures (truck panel, site sign, office panel, sky
+    // wordmarks, sandwich board) are drawn before the webfonts finish loading
+    // and would keep the fallback font forever. Each registers a redraw here;
+    // we repaint them all once the font faces are ready. Gameplay-time
+    // textures (floor stencils, score card) draw after load and don't need it.
+    const fontRedraws = []
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(() => {
+        if (cancelled) return
+        for (const redraw of fontRedraws) redraw()
+      })
+    }
+
     // ── Branded prop builders (workers, hats, flags, vehicle, etc.) ──
     function makeHardHat(color = 0xffcc00) {
       const g = new THREE.Group()
@@ -491,7 +577,7 @@ export default function Game() {
       c.width = 256; c.height = 128
       const ctx = c.getContext('2d')
       ctx.clearRect(0, 0, 256, 128)
-      ctx.font = '900 96px "Segoe UI", sans-serif'
+      ctx.font = `88px ${F_DISPLAY}`
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
       ctx.lineWidth = 10; ctx.strokeStyle = '#1a0a44'
       ctx.strokeText(String(n), 128, 64)
@@ -534,16 +620,20 @@ export default function Game() {
       const sCanvas = document.createElement('canvas')
       sCanvas.width = 512; sCanvas.height = 256
       const sctx = sCanvas.getContext('2d')
-      sctx.fillStyle = '#ffffff'; sctx.fillRect(0, 0, 512, 256)
-      sctx.fillStyle = '#660099'
-      sctx.font = '900 130px "Segoe UI", sans-serif'
-      sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
-      sctx.fillText('RADIAN', 256, 110)
-      sctx.fillStyle = '#1a0a44'
-      sctx.font = '800 50px "Segoe UI", sans-serif'
-      sctx.fillText('SCAFFOLDING CO.', 256, 200)
+      const drawTruckPanel = () => {
+        sctx.fillStyle = '#ffffff'; sctx.fillRect(0, 0, 512, 256)
+        sctx.fillStyle = '#660099'
+        sctx.font = `100px ${F_DISPLAY}`
+        sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
+        sctx.fillText('RADIAN', 256, 110)
+        sctx.fillStyle = '#1a0a44'
+        sctx.font = `700 46px ${F_COND}`
+        sctx.fillText('SCAFFOLDING CO.', 256, 200)
+      }
+      drawTruckPanel()
       const sTex = new THREE.CanvasTexture(sCanvas)
       sTex.colorSpace = THREE.SRGBColorSpace
+      fontRedraws.push(() => { drawTruckPanel(); sTex.needsUpdate = true })
       const panelMat = new THREE.MeshBasicMaterial({ map: sTex })
       const panelF = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 1.5), panelMat)
       panelF.position.set(0.7, 1.25, 1.01); g.add(panelF)
@@ -715,16 +805,20 @@ export default function Game() {
       const sCanvas = document.createElement('canvas')
       sCanvas.width = 512; sCanvas.height = 256
       const sctx = sCanvas.getContext('2d')
-      sctx.fillStyle = '#2266aa'; sctx.fillRect(0, 0, 512, 256)
-      sctx.fillStyle = '#ffe94d'
-      sctx.font = '900 130px "Segoe UI", sans-serif'
-      sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
-      sctx.fillText('RADIAN', 256, 100)
-      sctx.fillStyle = '#ffffff'
-      sctx.font = '800 44px "Segoe UI", sans-serif'
-      sctx.fillText('SITE OFFICE', 256, 190)
+      const drawOfficePanel = () => {
+        sctx.fillStyle = '#2266aa'; sctx.fillRect(0, 0, 512, 256)
+        sctx.fillStyle = '#ffe94d'
+        sctx.font = `100px ${F_DISPLAY}`
+        sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
+        sctx.fillText('RADIAN', 256, 100)
+        sctx.fillStyle = '#ffffff'
+        sctx.font = `700 42px ${F_COND}`
+        sctx.fillText('SITE OFFICE', 256, 190)
+      }
+      drawOfficePanel()
       const sTex = new THREE.CanvasTexture(sCanvas)
       sTex.colorSpace = THREE.SRGBColorSpace
+      fontRedraws.push(() => { drawOfficePanel(); sTex.needsUpdate = true })
       const panel = new THREE.Mesh(
         new THREE.PlaneGeometry(3.6, 1.6),
         new THREE.MeshBasicMaterial({ map: sTex })
@@ -863,20 +957,24 @@ export default function Game() {
       const sCanvas = document.createElement('canvas')
       sCanvas.width = 256; sCanvas.height = 256
       const sctx = sCanvas.getContext('2d')
-      sctx.fillStyle = '#ffaa00'; sctx.fillRect(0, 0, 256, 256)
-      sctx.fillStyle = '#1a0a44'
-      sctx.fillRect(8, 8, 240, 240)
-      sctx.fillStyle = '#ffe94d'
-      sctx.font = '900 38px "Segoe UI", sans-serif'
-      sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
-      sctx.fillText('MEN', 128, 80)
-      sctx.fillText('AT', 128, 128)
-      sctx.fillText('WORK', 128, 176)
-      // Yellow border
-      sctx.strokeStyle = '#ffe94d'; sctx.lineWidth = 6
-      sctx.strokeRect(20, 20, 216, 216)
+      const drawBoardFace = () => {
+        sctx.fillStyle = '#ffaa00'; sctx.fillRect(0, 0, 256, 256)
+        sctx.fillStyle = '#1a0a44'
+        sctx.fillRect(8, 8, 240, 240)
+        sctx.fillStyle = '#ffe94d'
+        sctx.font = `34px ${F_DISPLAY}`
+        sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
+        sctx.fillText('MEN', 128, 80)
+        sctx.fillText('AT', 128, 128)
+        sctx.fillText('WORK', 128, 176)
+        // Yellow border
+        sctx.strokeStyle = '#ffe94d'; sctx.lineWidth = 6
+        sctx.strokeRect(20, 20, 216, 216)
+      }
+      drawBoardFace()
       const sTex = new THREE.CanvasTexture(sCanvas)
       sTex.colorSpace = THREE.SRGBColorSpace
+      fontRedraws.push(() => { drawBoardFace(); sTex.needsUpdate = true })
       const mat = new THREE.MeshBasicMaterial({ map: sTex, side: THREE.DoubleSide })
       const front = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 1.0), mat)
       front.position.set(0, 0.55, 0.18); front.rotation.x = 0.2; g.add(front)
@@ -906,14 +1004,18 @@ export default function Game() {
       const c = document.createElement('canvas')
       c.width = 4096; c.height = 256
       const ctx = c.getContext('2d')
-      ctx.clearRect(0, 0, c.width, c.height)
-      ctx.font = `900 ${fontSize}px "Segoe UI", sans-serif`
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-      ctx.fillStyle = color
-      ctx.shadowColor = color; ctx.shadowBlur = 30
-      ctx.fillText(stripText, c.width / 2, c.height / 2)
+      const drawStrip = () => {
+        ctx.clearRect(0, 0, c.width, c.height)
+        ctx.font = `${fontSize}px ${F_DISPLAY}`
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+        ctx.fillStyle = color
+        ctx.shadowColor = color; ctx.shadowBlur = 30
+        ctx.fillText(stripText, c.width / 2, c.height / 2)
+      }
+      drawStrip()
       const tex = new THREE.CanvasTexture(c)
       tex.colorSpace = THREE.SRGBColorSpace
+      fontRedraws.push(() => { drawStrip(); tex.needsUpdate = true })
       tex.wrapS = THREE.RepeatWrapping
       tex.wrapT = THREE.ClampToEdgeWrapping
       // Tile the canvas twice horizontally so the wide plane stays packed with
@@ -1068,16 +1170,20 @@ export default function Game() {
         const sCanvas = document.createElement('canvas')
         sCanvas.width = 512; sCanvas.height = 200
         const sctx = sCanvas.getContext('2d')
-        sctx.fillStyle = '#ffe94d'; sctx.fillRect(0, 0, 512, 200)
-        sctx.fillStyle = '#1a0a44'
-        sctx.font = '900 130px "Segoe UI", sans-serif'
-        sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
-        sctx.fillText('RADIAN', 256, 80)
-        sctx.fillStyle = '#660099'
-        sctx.font = '800 38px "Segoe UI", sans-serif'
-        sctx.fillText('SCAFFOLDING', 256, 158)
+        const drawSignFace = () => {
+          sctx.fillStyle = '#ffe94d'; sctx.fillRect(0, 0, 512, 200)
+          sctx.fillStyle = '#1a0a44'
+          sctx.font = `96px ${F_DISPLAY}`
+          sctx.textAlign = 'center'; sctx.textBaseline = 'middle'
+          sctx.fillText('RADIAN', 256, 76)
+          sctx.fillStyle = '#660099'
+          sctx.font = `700 36px ${F_COND}`
+          sctx.fillText('SCAFFOLDING', 256, 156)
+        }
+        drawSignFace()
         const sTex = new THREE.CanvasTexture(sCanvas)
         sTex.colorSpace = THREE.SRGBColorSpace
+        fontRedraws.push(() => { drawSignFace(); sTex.needsUpdate = true })
         const face = new THREE.Mesh(
           new THREE.PlaneGeometry(3.4, 1.3),
           new THREE.MeshBasicMaterial({ map: sTex })
@@ -1460,7 +1566,7 @@ export default function Game() {
       ctx.fillStyle = 'rgba(10,0,25,0.65)'
       ctx.fillRect(2, 75, 84, 12)
       ctx.fillStyle = 'rgba(255,233,77,0.92)'
-      ctx.font = 'bold 9px sans-serif'
+      ctx.font = `700 10px ${F_COND}`
       ctx.textAlign = 'center'
       ctx.fillText(type.replace('scaf_', '').replace(/_/g, ' ').toUpperCase(), 44, 84)
     }
@@ -1524,6 +1630,9 @@ export default function Game() {
       perfectCount: 0,
       maxCombo: 0,
       tierReached: 0,
+      // One-shot per run: prize-threshold banner fired / tower has been near topple.
+      prizeAwarded: false,
+      nearTopple: false,
       framesSinceLand: 0,
       lastLandedPiece: null,
       lastLandedSquash: 0,
@@ -1567,7 +1676,7 @@ export default function Game() {
       el.className = 'tier-banner'
       const name = TIER_NAMES[Math.min(tier, TIER_NAMES.length - 1)]
       el.innerHTML = `TIER ${tier}<span class="sub">${name}</span>`
-      document.body.appendChild(el)
+      popupLayer.appendChild(el)
       setTimeout(() => el.remove(), 1500)
       // Punchy feedback so the difficulty step lands.
       state.screenShake = Math.max(state.screenShake, 0.6)
@@ -1579,10 +1688,40 @@ export default function Game() {
       const el = document.createElement('div')
       el.className = 'tier-banner milestone'
       el.innerHTML = `${score.toLocaleString()}<span class="sub">RADIANS EARNED</span>`
-      document.body.appendChild(el)
+      popupLayer.appendChild(el)
       setTimeout(() => el.remove(), 1500)
       state.screenShake = Math.max(state.screenShake, 0.5)
       state.flash = Math.max(state.flash, 0.35)
+    }
+
+    // Prize-threshold banner — the conference-booth hook, celebrated the moment
+    // it's crossed instead of only being mentioned on the pre-game briefing.
+    function spawnPrizeBanner() {
+      const el = document.createElement('div')
+      el.className = 'tier-banner prize'
+      el.innerHTML = `🏆 PRIZE UNLOCKED!<span class="sub">SHOW THIS RUN AT THE RADIAN BOOTH</span>`
+      popupLayer.appendChild(el)
+      setTimeout(() => el.remove(), 2200)
+      state.screenShake = Math.max(state.screenShake, 0.7)
+      state.flash = Math.max(state.flash, 0.55)
+      buzz([40, 60, 80])
+    }
+
+    // "SAVED IT!" popup — fires when the tower recovers from the brink of
+    // toppling. The tension/relief loop deserves visible feedback.
+    function spawnSavedPopup() {
+      const el = document.createElement('div')
+      el.className = 'pts-popup'
+      el.style.left = window.innerWidth / 2 + 'px'
+      el.style.top = window.innerHeight * 0.38 + 'px'
+      el.style.fontSize = '34px'
+      el.style.color = '#44ffcc'
+      el.style.textShadow = '0 0 24px #00d4ff, 0 0 10px #44ffcc'
+      el.textContent = 'SAVED IT!'
+      popupLayer.appendChild(el)
+      setTimeout(() => el.remove(), 900)
+      state.flash = Math.max(state.flash, 0.2)
+      buzz(30)
     }
 
     // Chaos event popup — slams into view like a tier banner but red and angry.
@@ -1591,7 +1730,7 @@ export default function Game() {
       el.className = 'tier-banner chaos-evt'
       el.style.setProperty('--chaos-color', color)
       el.textContent = text
-      document.body.appendChild(el)
+      popupLayer.appendChild(el)
       setTimeout(() => el.remove(), 1800)
     }
 
@@ -1645,7 +1784,7 @@ export default function Game() {
       const el = document.createElement('div')
       el.className = 'tier-banner checkpoint'
       el.innerHTML = `CHECKPOINT — FLOOR ${floor}<span class="sub">BIG PIECE INCOMING</span>`
-      document.body.appendChild(el)
+      popupLayer.appendChild(el)
       setTimeout(() => el.remove(), 1500)
       state.flash = Math.max(state.flash, 0.4)
     }
@@ -1657,7 +1796,7 @@ export default function Game() {
       el.className = 'bias-warn wind ' + side
       const arrow = dir > 0 ? '→ → →' : '← ← ←'
       el.innerHTML = `<span class="arrow">${arrow}</span> WIND <span class="arrow">${arrow}</span>`
-      document.body.appendChild(el)
+      popupLayer.appendChild(el)
       setTimeout(() => el.remove(), 900)
     }
 
@@ -1672,7 +1811,7 @@ export default function Game() {
       el.innerHTML = dir < 0
         ? `${label} <span class="arrow">${arrow}</span>`
         : `<span class="arrow">${arrow}</span> ${label}`
-      document.body.appendChild(el)
+      popupLayer.appendChild(el)
       setTimeout(() => el.remove(), 720)
     }
 
@@ -1704,7 +1843,7 @@ export default function Game() {
         el.style.textShadow = '0 0 20px #ffaa00'
         el.textContent = '+' + pts
       }
-      document.body.appendChild(el)
+      popupLayer.appendChild(el)
       setTimeout(() => el.remove(), 900)
     }
 
@@ -1713,6 +1852,7 @@ export default function Game() {
     const texLoader = new THREE.TextureLoader()
     const logoTex = texLoader.load('/logo.png')
     logoTex.colorSpace = THREE.SRGBColorSpace
+    sharedTextures.add(logoTex)
 
     // ── Sky brand layer ───────────────────────────────────────
     // Giant tilted RADIAN wordmark planes + ghost logo sprites drifting far
@@ -1785,6 +1925,7 @@ export default function Game() {
       cx.fillRect(0, 0, 256, 256)
       const t = new THREE.CanvasTexture(c)
       t.colorSpace = THREE.SRGBColorSpace
+      sharedTextures.add(t)
       return t
     })()
 
@@ -1815,6 +1956,7 @@ export default function Game() {
       }
       const t = new THREE.CanvasTexture(c)
       t.colorSpace = THREE.SRGBColorSpace
+      sharedTextures.add(t)
       return t
     })()
 
@@ -1866,6 +2008,7 @@ export default function Game() {
       }
       const t = new THREE.CanvasTexture(c)
       t.colorSpace = THREE.SRGBColorSpace
+      sharedTextures.add(t)
       return t
     })()
 
@@ -1899,12 +2042,15 @@ export default function Game() {
       // Project world Y → screen Y so the arrow lines up vertically with the actual shot.
       const screenY = worldYToScreenY(absY)
       el.style.top = Math.max(60, Math.min(window.innerHeight - 80, screenY)) + 'px'
-      document.body.appendChild(el)
-      setTimeout(() => el.remove(), 750)
+      popupLayer.appendChild(el)
       state.projectileWarnings.push({
         dir,
         absY, // committed world Y — used by spawnProjectile, not recomputed
         framesLeft: 45, // ~0.75s lead
+        // The arrow is removed by the frame loop when framesLeft expires (NOT a
+        // real-time setTimeout) so pausing mid-telegraph keeps the warning on
+        // screen and the projectile never arrives unannounced after a resume.
+        el,
       })
     }
 
@@ -2087,6 +2233,7 @@ export default function Game() {
         spawnImpactDecal(state.currentPiece, pj.mesh.position.x, pj.mesh.position.y)
       }
       state.screenShake = Math.max(state.screenShake, 0.55)
+      buzz(35)
       spawnShockwave(pj.mesh.position.x, pj.mesh.position.y)
       spawnBurst(pj.mesh.position.x, pj.mesh.position.y, 0, 22, [0xcc66ff, 0xff88ff, 0xffffff, 0x9966ff, 0xff44ff])
     }
@@ -2141,7 +2288,7 @@ export default function Game() {
       c.width = c.height = 128
       const ctx = c.getContext('2d')
       ctx.clearRect(0, 0, 128, 128)
-      ctx.font = '900 96px "Segoe UI", sans-serif'
+      ctx.font = `88px ${F_DISPLAY}`
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
       ctx.lineWidth = 8; ctx.strokeStyle = '#1a0a44'
       ctx.fillStyle = '#ffffff'
@@ -2179,21 +2326,28 @@ export default function Game() {
       })
     }
     function disposePowerup(pu) {
+      disposeObject3D(pu.mesh) // frees the halo/label sprite materials + per-powerup letter texture
       scene.remove(pu.mesh)
     }
     function powerupHitsPiece(pu, piece) {
       const px = pu.mesh.position.x
       const py = pu.mesh.position.y
-      const piX = piece.position.x, piY = piece.position.y
-      const pw = piece.userData.pw, ph = piece.userData.ph
-      // Generous radial test — power-ups should be easy to grab.
-      const dx = px - piX, dy = py - piY
-      return Math.abs(dx) < pw / 2 + 0.5 && Math.abs(dy) < ph / 2 + 0.5
+      // Anchor at the piece's true visual center (bbox center, computed at
+      // build time), not the geometry origin — origins sit at the BOTTOM for
+      // the pole-based builders, which shifted the collect zone below tall
+      // pieces like the flag/rocket. Same fix the projectile hit test got.
+      const cx = piece.position.x + (piece.userData.localCenterX || 0)
+      const cy = piece.position.y + (piece.userData.localCenterY ?? piece.userData.ph * 0.5)
+      const hw = piece.userData.pw / 2
+      const hh = piece.userData.localHalfY || piece.userData.ph / 2
+      // Generous test — power-ups should be easy to grab.
+      return Math.abs(px - cx) < hw + 0.5 && Math.abs(py - cy) < hh + 0.5
     }
     function onPowerupCollect(pu) {
       const at = pu.mesh.position
       spawnBurst(at.x, at.y, 0, 26, [POWERUP_COLORS[pu.type], 0xffffff, 0xffe94d])
       state.flash = Math.max(state.flash, 0.45)
+      buzz(25)
       if (pu.type === 'wide')   state.buffWide = true
       if (pu.type === 'freeze') state.buffFreeze = 180 // 3s @ 60fps
       if (pu.type === 'auto')   state.buffAutoPerfect = true
@@ -2208,7 +2362,7 @@ export default function Game() {
       el.textContent = pu.type === 'wide'   ? '+ WIDE PIECE'
                      : pu.type === 'freeze' ? '+ FREEZE 3s'
                      :                        '+ AUTO PERFECT'
-      document.body.appendChild(el)
+      popupLayer.appendChild(el)
       setTimeout(() => el.remove(), 900)
     }
 
@@ -2229,6 +2383,7 @@ export default function Game() {
 
     function spawnNext() {
       if (state.currentPiece) {
+        disposeObject3D(state.currentPiece)
         scene.remove(state.currentPiece)
         state.currentPiece = null
       }
@@ -2349,6 +2504,14 @@ export default function Game() {
         state.milestoneIdx++
       }
 
+      // Prize threshold — one-shot per run. Celebrating the crossing in the
+      // moment is the whole booth hook; the threshold is per-mode.
+      if (!state.prizeAwarded &&
+          state.score >= (PRIZE_THRESHOLD[state.foundation] ?? 1000)) {
+        state.prizeAwarded = true
+        spawnPrizeBanner()
+      }
+
       const sc = scoreRef.current
       if (sc) {
         sc.textContent = state.score
@@ -2389,6 +2552,8 @@ export default function Game() {
 
       const burst = [0xffe94d, 0xff44ff, 0x44ffcc, 0xff4444, 0x44ff77]
       spawnBurst(lx, state.towerHeight + ph / 2, 0, perf ? 30 : isMiss ? 8 : 18, burst)
+      // Haptic land cue — perfect gets a double-tap pattern.
+      buzz(perf ? [15, 30, 25] : 20)
       // Combo-scaled shake — bigger combos rumble harder.
       const comboShake = Math.min(0.55, state.combo * 0.06)
       if (perf) {
@@ -2483,8 +2648,8 @@ export default function Game() {
     function triggerGameOver() {
       state.gameActive = false
       state.toppling = true
-      if (state.dropPiece) { scene.remove(state.dropPiece); state.dropPiece = null }
-      if (state.currentPiece) { scene.remove(state.currentPiece); state.currentPiece = null }
+      if (state.dropPiece) { disposeObject3D(state.dropPiece); scene.remove(state.dropPiece); state.dropPiece = null }
+      if (state.currentPiece) { disposeObject3D(state.currentPiece); scene.remove(state.currentPiece); state.currentPiece = null }
       // Hide the crane during the fall so it doesn't hover over the toppling tower.
       for (const child of craneGroup.children) {
         if (child.geometry) child.geometry.dispose()
@@ -2494,14 +2659,15 @@ export default function Game() {
       craneCable = null
       spawnBurst(0, state.towerHeight / 2, 0, 80, [0xff3355, 0xff7700, 0xffe94d, 0xff00ff, 0x44ffcc])
       state.screenShake = 2.5
+      buzz([60, 40, 120]) // long rumble — the tower is coming down
       // Wait long enough for the tower to actually fall before showing the screen.
       state.gameOverDelay = 90
     }
 
     function startGame(foundation = 'standard') {
-      for (const p of state.stackedPieces) towerGroup.remove(p)
+      for (const p of state.stackedPieces) { disposeObject3D(p); towerGroup.remove(p) }
       state.stackedPieces = []
-      for (const fp of state.fallingPieces) scene.remove(fp.mesh)
+      for (const fp of state.fallingPieces) { disposeObject3D(fp.mesh); scene.remove(fp.mesh) }
       state.fallingPieces = []
       for (const pj of state.projectiles) disposeProjectile(pj)
       state.projectiles = []
@@ -2521,9 +2687,6 @@ export default function Game() {
       state.impactDecals = []
       for (const pu of state.powerups) disposePowerup(pu)
       state.powerups = []
-      state.projectileTimer = state.condemnedMode ? 30 + Math.random() * 30
-        : state.chaosMode ? 60 + Math.random() * 60
-        : 240 + Math.random() * 180
       state.powerupTimer = 300 + Math.random() * 240
       state.towerHeight = 0
       state.towerLeanX = 0
@@ -2536,9 +2699,12 @@ export default function Game() {
       state.perfectCount = 0
       state.maxCombo = 0
       state.tierReached = 0
+      state.prizeAwarded = false
+      state.nearTopple = false
       state.framesSinceLand = 0
       state.lastLandedPiece = null
       state.lastLandedSquash = 0
+      for (const w of state.projectileWarnings) w.el?.remove()
       state.projectileWarnings = []
       // Foundation choice + score multiplier
       const fnd = FOUNDATIONS[foundation] || FOUNDATIONS.standard
@@ -2554,6 +2720,12 @@ export default function Game() {
       state.timeSlow = 0
       state.condemnedMode = foundation === 'condemned'
       state.chaosMode = foundation === 'chaos' || state.condemnedMode
+      // Must come AFTER the mode flags above — previously this read the
+      // PREVIOUS run's flags, so a standard run after condemned got a
+      // near-instant first projectile (and chaos after standard got a lazy one).
+      state.projectileTimer = state.condemnedMode ? 30 + Math.random() * 30
+        : state.chaosMode ? 60 + Math.random() * 60
+        : 240 + Math.random() * 180
       state.chaosEvent = null
       state.chaosEventFrames = 0
       // Condemned fires events sooner and more often than chaos
@@ -2653,7 +2825,8 @@ export default function Game() {
     }
 
     // Compose a shareable PNG: game canvas snapshot + branding + recap stats.
-    function generateScoreCard() {
+    // playerName comes from the React layer (active registered player).
+    function generateScoreCard(playerName) {
       const W = 800, H = 1100
       const c = document.createElement('canvas')
       c.width = W; c.height = H
@@ -2666,11 +2839,11 @@ export default function Game() {
       ctx.fillRect(0, 0, W, H)
       // Header bar
       ctx.fillStyle = '#ffe94d'
-      ctx.font = '900 64px "Segoe UI", sans-serif'
+      ctx.font = `56px ${F_DISPLAY}`
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
       ctx.fillText('RADIAN', W / 2, 70)
       ctx.fillStyle = '#aa88dd'
-      ctx.font = '800 22px "Segoe UI", sans-serif'
+      ctx.font = `700 22px ${F_COND}`
       ctx.fillText('SCAFFOLDING · TOWER STACKER', W / 2, 115)
       // Game-canvas snapshot (the WebGL canvas was rendered with preserveDrawingBuffer)
       try {
@@ -2680,12 +2853,19 @@ export default function Game() {
         ctx.fillStyle = '#240540'
         ctx.fillRect(40, 150, W - 80, 460)
       }
+      // Player name — the card is the shareable artifact; it should carry
+      // whose run it was.
+      if (playerName) {
+        ctx.fillStyle = '#ffffff'
+        ctx.font = `26px ${F_DISPLAY}`
+        ctx.fillText(`BUILT BY ${String(playerName).toUpperCase().slice(0, 20)}`, W / 2, 636)
+      }
       // Big score
       ctx.fillStyle = '#ffe94d'
-      ctx.font = '900 100px "Segoe UI", sans-serif'
+      ctx.font = `700 100px ${F_COND}`
       ctx.fillText(state.score.toLocaleString(), W / 2, 700)
       ctx.fillStyle = '#aa88dd'
-      ctx.font = '800 18px "Segoe UI", sans-serif'
+      ctx.font = `700 18px ${F_COND}`
       ctx.fillText('FINAL SCORE', W / 2, 760)
       // Recap row
       const stats = [
@@ -2698,24 +2878,36 @@ export default function Game() {
       stats.forEach((s, i) => {
         const cx = 40 + colW * (i + 0.5)
         ctx.fillStyle = s.col
-        ctx.font = '900 56px "Segoe UI", sans-serif'
+        ctx.font = `700 56px ${F_COND}`
         ctx.fillText(s.num, cx, 860)
         ctx.fillStyle = '#aa88dd'
-        ctx.font = '800 14px "Segoe UI", sans-serif'
+        ctx.font = `700 14px ${F_COND}`
         ctx.fillText(s.lbl, cx, 910)
       })
       // Foundation + date
       ctx.fillStyle = '#ffffff'
-      ctx.font = '700 18px "Segoe UI", sans-serif'
+      ctx.font = `600 18px ${F_BODY}`
       const fnd = FOUNDATIONS[state.foundation] || FOUNDATIONS.standard
       ctx.fillText(`${fnd.label} FOUNDATION · ${new Date().toLocaleDateString()}`, W / 2, 970)
       // Footer CTA
       ctx.fillStyle = '#ffe94d'
-      ctx.font = '900 26px "Segoe UI", sans-serif'
+      ctx.font = `24px ${F_DISPLAY}`
       ctx.fillText('RADIAN SCAFFOLDING', W / 2, 1030)
       ctx.fillStyle = '#aa88dd'
-      ctx.font = '700 16px "Segoe UI", sans-serif'
+      ctx.font = `600 16px ${F_BODY}`
       ctx.fillText('Built to stand. Built to stack.', W / 2, 1062)
+      // Optional QR (frontend/public/qr.png) — bottom-right corner with a
+      // white quiet-zone pad. Skipped gracefully when the asset is absent.
+      if (qrImg.complete && qrImg.naturalWidth > 0) {
+        const qs = 120, pad = 10
+        const qx = W - 40 - qs, qy = H - 52 - qs
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(qx - pad, qy - pad, qs + pad * 2, qs + pad * 2)
+        ctx.drawImage(qrImg, qx, qy, qs, qs)
+        ctx.fillStyle = '#aa88dd'
+        ctx.font = `700 12px ${F_COND}`
+        ctx.fillText('SCAN FOR RADIAN', qx + qs / 2, qy + qs + pad + 14)
+      }
       // Trigger download
       const link = document.createElement('a')
       link.download = `radian-stacker-${state.score}-${Date.now()}.png`
@@ -2926,7 +3118,9 @@ export default function Game() {
           }
         }
         // Constant low-level ambient jitter — barely perceptible but adds unease.
-        camera.position.x += (Math.random() - 0.5) * 0.05
+        // Decay term keeps this a bounded wobble around center; a bare `+=`
+        // random-walks the camera visibly off-axis over a long calm stretch.
+        camera.position.x = camera.position.x * 0.92 + (Math.random() - 0.5) * 0.05
       }
 
       // Wind gusts — telegraphed sustained drift on the swing X.
@@ -2934,22 +3128,23 @@ export default function Game() {
       {
         const w = state.wind
         if (state.gameActive) {
-          if (w.telegraphFrames > 0) w.telegraphFrames--
-          if (w.active) {
+          if (w.telegraphFrames > 0) {
+            // Frame-based activation (was a real-time setTimeout, which kept
+            // ticking through ESC pause and desynced the gust from the warning).
+            w.telegraphFrames--
+            if (w.telegraphFrames === 0) {
+              w.active = true
+              w.frames = 220 + Math.floor(Math.random() * 100) // ~3.5–5.3s
+            }
+          } else if (w.active) {
             w.frames--
             if (w.frames <= 0) w.active = false
-          } else if (w.telegraphFrames === 0) {
+          } else {
             w.timer--
             if (w.timer <= 0 && (state.chaosMode || state.stackedPieces.length >= 8)) {
               w.dir = Math.random() < 0.5 ? -1 : 1
-              w.telegraphFrames = 50
+              w.telegraphFrames = 50 // ~0.83s lead, matches the warning popup
               spawnWindWarning(w.dir)
-              // Schedule the actual gust to start after the telegraph window
-              setTimeout(() => {
-                if (cancelled) return
-                w.active = true
-                w.frames = 220 + Math.floor(Math.random() * 100) // ~3.5–5.3s
-              }, 800)
               // Reset cooldown — chaos: 6-12s; normal: 18-32s
               w.timer = state.chaosMode
                 ? 360 + Math.floor(Math.random() * 360)
@@ -3155,6 +3350,19 @@ export default function Game() {
       const toppleThresh = Math.max(14, (state.condemnedMode ? 18 : state.chaosMode ? 24 : 32) - tier * 4)
       if (state.gameActive && Math.abs(state.towerAngle) > toppleThresh) triggerGameOver()
 
+      // Near-topple save — mark an excursion past 70% of the topple budget;
+      // if the player brings it back under 35%, reward the recovery. Hysteresis
+      // between the two lines means one excursion fires at most one popup.
+      if (state.gameActive && !state.toppling) {
+        const absAngle = Math.abs(state.towerAngle)
+        if (absAngle > toppleThresh * 0.7) {
+          state.nearTopple = true
+        } else if (state.nearTopple && absAngle < toppleThresh * 0.35) {
+          state.nearTopple = false
+          spawnSavedPopup()
+        }
+      }
+
       // Balance needle — combines instantaneous lean with the windowed-bias average so
       // the meter reflects both failure modes. Color-flips at the WARNING threshold,
       // not the topple threshold, so the player gets visual lead time too.
@@ -3194,6 +3402,7 @@ export default function Game() {
           const w = state.projectileWarnings[i]
           w.framesLeft--
           if (w.framesLeft <= 0) {
+            if (w.el) w.el.remove()
             if (!state.chaosMode || state.projectiles.length < 2) {
               spawnProjectile(w.dir, w.absY)
             }
@@ -3392,6 +3601,7 @@ export default function Game() {
         fp.mesh.rotation.z += fp.rotV
         fp.mesh.rotation.x += fp.rotV * 0.4
         if (fp.mesh.position.y < -40) {
+          disposeObject3D(fp.mesh)
           scene.remove(fp.mesh)
           state.fallingPieces.splice(i, 1)
         }
@@ -3526,6 +3736,12 @@ export default function Game() {
       document.removeEventListener('keydown', onKey)
       canvas.removeEventListener('pointerdown', onPointer)
       canvas.removeEventListener('contextmenu', onContextMenu)
+      canvas.removeEventListener('webglcontextlost', onContextLost)
+      popupLayer.remove() // tears down every in-flight banner/popup/warning
+      for (const g of geoCache.values()) g.dispose()
+      geoCache.clear()
+      for (const t of sharedTextures) t.dispose()
+      sharedTextures.clear()
       renderer.dispose()
       engineRef.current = null
     }
@@ -3544,8 +3760,22 @@ export default function Game() {
     engineRef.current?.startGame(foundation)
   }
   const handleSaveCard = () => {
-    engineRef.current?.generateScoreCard()
+    engineRef.current?.generateScoreCard(player?.name)
   }
+
+  // Hold-to-restart — long-press (2 s) anywhere on the game-over screen that
+  // isn't a button restarts the same mode instantly, skipping the briefing.
+  // Removes all button friction for repeat plays at a busy booth.
+  const holdTimerRef = useRef(null)
+  const handleHoldStart = (e) => {
+    if (e.target.closest('button, input, a')) return
+    clearTimeout(holdTimerRef.current)
+    holdTimerRef.current = setTimeout(() => {
+      setShowGameOver(false)
+      engineRef.current?.startGame(foundation)
+    }, 2000)
+  }
+  const handleHoldCancel = () => clearTimeout(holdTimerRef.current)
   const handleResume = () => {
     setShowPause(false)
     setShowSettings(false)
@@ -3622,6 +3852,15 @@ export default function Game() {
     })
     return () => eng.setRunEndListener?.(null)
   }, [])
+
+  // Per-mode best for the just-finished run — the local board already includes
+  // this run (onRunEnd writes it before the overlay mounts), so the top match
+  // is either an older best or the run itself (= new personal best).
+  const modeBest = showGameOver
+    ? loadLocalLeaderboard().find((e) =>
+        e.foundation === recap.foundation && (!player?.name || e.name === player.name)) || null
+    : null
+  const modeLabel = FOUNDATION_LABEL[recap.foundation] || recap.foundation
 
   const handleNewUser = () => {
     setPlayer(null)
@@ -3703,7 +3942,13 @@ export default function Game() {
                       className={'foundation-btn' + (foundation === key ? ' selected' : '')}
                       onClick={() => setFoundation(key)}
                     >
+                      <div className="foundation-mult">{fnd.mult}×</div>
                       <div className="foundation-name">{fnd.label}</div>
+                      <div className="foundation-diff" aria-hidden="true">
+                        {[1, 2, 3, 4, 5].map((i) => (
+                          <span key={i} className={'diff-chev' + (i <= fnd.diff ? ' on' : '')} />
+                        ))}
+                      </div>
                       <div className="foundation-sub">{fnd.sub}</div>
                     </button>
                   ))}
@@ -3799,7 +4044,14 @@ export default function Game() {
         </div>
       )}
       {showGameOver && (
-        <div className="screen" id="gameover-screen">
+        <div
+          className="screen"
+          id="gameover-screen"
+          onPointerDown={handleHoldStart}
+          onPointerUp={handleHoldCancel}
+          onPointerLeave={handleHoldCancel}
+          onPointerCancel={handleHoldCancel}
+        >
           <div className="brand-block small">
             <img className="brand-logo" src="/logo.png" alt="Radian" />
             <div className="brand-wordmark">RADIAN</div>
@@ -3825,6 +4077,13 @@ export default function Game() {
               <div className="stat-lbl">Tier Reached</div>
             </div>
           </div>
+          {modeBest && (
+            <div className="mode-best">
+              {recap.score >= modeBest.score
+                ? <>🏆 New personal best in <span className="yl">{modeLabel}</span>!</>
+                : <>Your best in {modeLabel}: <span className="yl">{modeBest.score.toLocaleString()}</span></>}
+            </div>
+          )}
           {player && (
             <div className="player-greeting small">
               Saved as <span className="yl">{player.name}</span>
@@ -3836,6 +4095,7 @@ export default function Game() {
             <button className="big-btn secondary" onClick={handleSaveCard}>Save Score Card</button>
             <button className="big-btn secondary" onClick={handleNewUser}>New User</button>
           </div>
+          <div className="hold-hint">…or hold anywhere for 2 s to rebuild instantly</div>
           <div className="brand-footer">
             Want a real tower that stays up? <span className="cta">Radian Scaffolding</span>
           </div>
@@ -4016,7 +4276,7 @@ function LeaderboardScreen({ onClose, onGoHome, highlightId }) {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
+    // loading initializes to true; the mount-only effect doesn't need to re-set it.
     fetchMergedLeaderboard(50).then((res) => {
       if (cancelled) return
       setEntries(res.entries)
@@ -4029,6 +4289,16 @@ function LeaderboardScreen({ onClose, onGoHome, highlightId }) {
   const [showClearPrompt, setShowClearPrompt] = useState(false)
   const [clearCode, setClearCode] = useState('')
   const [clearError, setClearError] = useState('')
+
+  // Today / all-time filter — at a multi-day conference, day-2 visitors face
+  // day-1's top scores; a "Today" view keeps the board winnable.
+  const [range, setRange] = useState('all')
+  const visibleEntries = (() => {
+    if (range !== 'today') return entries
+    const startOfToday = new Date()
+    startOfToday.setHours(0, 0, 0, 0)
+    return entries.filter((e) => e.date && new Date(e.date) >= startOfToday)
+  })()
 
   const handleClear = () => {
     // Passcode-gated to prevent a random booth visitor from wiping the board.
@@ -4060,6 +4330,17 @@ function LeaderboardScreen({ onClose, onGoHome, highlightId }) {
             : 'Showing local scores only (offline)'}
       </div>
 
+      <div className="lb-range-toggle">
+        <button
+          className={'lb-range-btn' + (range === 'all' ? ' active' : '')}
+          onClick={() => setRange('all')}
+        >All Time</button>
+        <button
+          className={'lb-range-btn' + (range === 'today' ? ' active' : '')}
+          onClick={() => setRange('today')}
+        >Today</button>
+      </div>
+
       <div className="leaderboard-table">
         <div className="leaderboard-row leaderboard-head">
           <div className="lb-rank">#</div>
@@ -4069,13 +4350,19 @@ function LeaderboardScreen({ onClose, onGoHome, highlightId }) {
           <div className="lb-foundation">Base</div>
           <div className="lb-date">Date</div>
         </div>
-        {entries.length === 0 && !loading && (
-          <div className="leaderboard-empty">No scores yet — be the first!</div>
+        {visibleEntries.length === 0 && !loading && (
+          <div className="leaderboard-empty">
+            {range === 'today' ? 'No scores yet today — be the first!' : 'No scores yet — be the first!'}
+          </div>
         )}
-        {entries.slice(0, 20).map((e, i) => (
+        {visibleEntries.slice(0, 20).map((e, i) => (
           <div
             key={e.id || `${e.name}-${e.score}-${i}`}
-            className={'leaderboard-row' + (e.id === highlightId ? ' highlight' : '')}
+            className={
+              'leaderboard-row' +
+              (e.id === highlightId ? ' highlight' : '') +
+              (i < 3 ? ` lb-top-${i + 1}` : '')
+            }
           >
             <div className="lb-rank">{i + 1}</div>
             <div className="lb-name">{e.name}</div>
