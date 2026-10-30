@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import './Game.css'
+import { createSiteExperience } from './siteExperience'
 import {
   addLocalScore,
   clearLocalLeaderboard,
@@ -147,19 +148,15 @@ export default function Game() {
   // Set when the most recent run is recorded into the leaderboard so we can
   // highlight that row in the leaderboard view.
   const [lastEntryId, setLastEntryId] = useState(null)
-  // Active player profile — collected on first visit (name, email, phone) and
-  // sticky across runs. Persisted to localStorage so booth visitors don't have
-  // to retype between attempts. `null` until they've filled the form.
-  const [player, setPlayer] = useState(() => {
-    try {
-      const raw = localStorage.getItem('radian_player')
-      if (raw) return JSON.parse(raw)
-      // Backwards-compat: pull a legacy name-only entry into the new shape.
-      const legacy = localStorage.getItem('radian_player_name')
-      if (legacy) return { name: legacy, email: '', phone: '' }
-      return null
-    } catch { return null }
-  })
+  // Kiosk identity belongs only to this visitor, never to a persisted browser profile.
+  const [player, setPlayer] = useState(null)
+  const [showRegistration, setShowRegistration] = useState(false)
+  const [showModes, setShowModes] = useState(false)
+  const prizeProgressRef = useRef(null)
+  const prizeLabelRef = useRef(null)
+  const hazardLabelRef = useRef(null)
+  const altitudeLabelRef = useRef(null)
+  const savedRunRef = useRef(false)
 
   // Mutable refs the engine writes into; exposed to React via the start handler
   const engineRef = useRef(null)
@@ -1657,11 +1654,15 @@ export default function Game() {
     // Game state
     const state = {
       gameActive: false,
+      nextSpawnFrames: 0,
       score: 0,
       sessionBest: loadLocalLeaderboard()[0]?.score || 0,
       chaosMode: false,
       condemnedMode: false,
       chaosTimer: 0,
+      hazardRestFrames: 0,
+      pendingChaos: null,
+      chaosWarningFrames: 0,
       chaosEvent: null,
       chaosEventFrames: 0,
       combo: 0,
@@ -1818,13 +1819,10 @@ export default function Game() {
     }
 
     // Fire a random chaos/condemned event — called by the chaos timer in the animate loop.
-    function fireChaosEvent() {
-      const baseEvents = ['surge', 'flip', 'quake']
-      const condemnedExtras = ['gravspike', 'tiltstorm', 'wiresnap']
-      const pool = state.condemnedMode ? [...baseEvents, ...condemnedExtras] : baseEvents
-      const evt = pool[Math.floor(Math.random() * pool.length)]
+    function fireChaosEvent(evt) {
       state.chaosEvent = evt
       state.chaosEventFrames = evt === 'surge' ? 240 : evt === 'gravspike' ? 180 : 60
+      state.hazardRestFrames = state.chaosEventFrames + 150
       state.flash = Math.max(state.flash, 0.5)
       if (evt === 'surge') {
         spawnChaosEventPopup('SPEED SURGE!', '#ff7700')
@@ -2046,6 +2044,8 @@ export default function Game() {
     // Crack/scorch decal for projectile impacts — radial dark scorch with
     // jagged crack lines emanating from the centre. Snapped onto the hit
     // piece in onProjectileHit so it follows the piece's transforms.
+    const siteExperience = createSiteExperience({ scene, towerGroup, camera, smokeTex, glowTex, workers, siteSpots })
+
     const crackTex = (() => {
       const c = document.createElement('canvas')
       c.width = c.height = 256
@@ -2472,7 +2472,7 @@ export default function Game() {
         state.currentPiece = null
       }
       const tier0 = Math.floor(state.stackedPieces.length / 25)
-      const pickType = () => state.chaosMode
+      const pickType = () => !state.chaosMode && state.stackedPieces.length < 5 ? 'scaf_flat' : state.chaosMode
         ? HARD_TYPES[Math.floor(Math.random() * HARD_TYPES.length)]
         : pickPieceType(tier0)
       let type = state.nextType || pickType()
@@ -2580,6 +2580,9 @@ export default function Game() {
       pts = Math.max(1, Math.round(pts * state.scoreMult))
       if (state.combo > state.maxCombo) state.maxCombo = state.combo
       state.score += pts
+      const prizeTarget = PRIZE_THRESHOLD[state.foundation] ?? 1000
+      if (prizeProgressRef.current) prizeProgressRef.current.value = Math.min(state.score, prizeTarget)
+      if (prizeLabelRef.current) prizeLabelRef.current.textContent = state.score >= prizeTarget ? 'Prize target reached!' : `${(prizeTarget - state.score).toLocaleString()} points to prize`
 
       // Score milestone banner — single banner per crossing.
       while (state.milestoneIdx < SCORE_MILESTONES.length &&
@@ -2594,6 +2597,8 @@ export default function Game() {
           state.score >= (PRIZE_THRESHOLD[state.foundation] ?? 1000)) {
         state.prizeAwarded = true
         spawnPrizeBanner()
+        siteExperience.prize(state.towerHeight)
+        state.hazardRestFrames = Math.max(state.hazardRestFrames, 210)
       }
 
       const sc = scoreRef.current
@@ -2638,16 +2643,16 @@ export default function Game() {
       // that clashed with the industrial palette; yellow-white-orange reads
       // as workmanship rather than a generic arcade pop.
       const burst = [BRAND.hazard, 0xffffff, BRAND.orange, BRAND.amberBright, 0xffb347]
-      spawnBurst(lx, state.towerHeight + ph / 2, 0, perf ? 30 : isMiss ? 8 : 18, burst)
+      siteExperience.land(perf, lx, state.towerHeight)
+      if (!siteExperience.reducedMotion) spawnBurst(lx, state.towerHeight, 0, perf ? 18 : good ? 3 : 6, perf ? burst : [0xb4a28c, 0x786955])
       // Haptic land cue — perfect gets a double-tap pattern.
       buzz(perf ? [15, 30, 25] : 20)
       // Combo-scaled shake — bigger combos rumble harder.
       const comboShake = Math.min(0.55, state.combo * 0.06)
       if (perf) {
-        spawnStarBurst(lx, state.towerHeight + ph / 2, 0)
-        state.screenShake = 0.7 + comboShake
-        state.camDolly = 1.0
-        state.flash = 0.7
+        state.screenShake = siteExperience.reducedMotion ? 0 : 0.18 + comboShake * 0.2
+        state.camDolly = siteExperience.reducedMotion ? 0 : 0.25
+        state.flash = siteExperience.reducedMotion ? 0 : 0.25
       }
       else if (isMiss) { state.screenShake = 0.5 + comboShake * 0.4 }
       else { state.screenShake = 0.25 + comboShake * 0.6 }
@@ -2694,7 +2699,8 @@ export default function Game() {
       updateTowerGlow()
 
       // Squash-on-land — kick scale to flat-and-wide, animate loop lerps it back.
-      p.scale.set(1.18, 0.72, 1.18)
+      p.userData.landingScale = p.scale.clone()
+      p.scale.multiply(new THREE.Vector3(1.10, 0.86, 1.10))
       state.lastLandedPiece = p
       state.lastLandedSquash = 1
       state.framesSinceLand = 0
@@ -2723,13 +2729,13 @@ export default function Game() {
         state.swingSpeed = Math.min(0.14, 0.065 + f * 0.0018)
         state.swingAmp   = Math.min(9.5,  7.2   + f * 0.055)
       } else {
-        state.swingSpeed = Math.min(0.095, 0.040 + f * 0.0011)
-        state.swingAmp   = Math.min(8.2,  5.8   + f * 0.040)
+        state.swingSpeed = Math.min(0.095, 0.030 + f * 0.0013)
+        state.swingAmp   = Math.min(8.2,  5.0   + f * 0.055)
       }
 
       // Schedule next piece from here — towerHeight is already updated so
       // spawnNext always reads the correct height for crane placement.
-      setTimeout(() => { if (!cancelled && state.gameActive) spawnNext() }, 200)
+      state.nextSpawnFrames = 12
     }
 
     function triggerGameOver() {
@@ -2752,6 +2758,12 @@ export default function Game() {
     }
 
     function startGame(foundation = 'standard') {
+      siteExperience.reset()
+      state.hazardRestFrames = 0
+      state.pendingChaos = null
+      state.chaosWarningFrames = 0
+      if (hazardLabelRef.current) hazardLabelRef.current.textContent = ''
+      state.paused = false
       for (const p of state.stackedPieces) { disposeObject3D(p); towerGroup.remove(p) }
       state.stackedPieces = []
       for (const fp of state.fallingPieces) { disposeObject3D(fp.mesh); scene.remove(fp.mesh) }
@@ -2832,10 +2844,13 @@ export default function Game() {
       state.checkpointPending = false
       state.pendingCheckpointScale = 0
       towerGroup.rotation.z = 0
+      state.nextSpawnFrames = 0
+      if (prizeProgressRef.current) { prizeProgressRef.current.max = PRIZE_THRESHOLD[foundation] ?? 1000; prizeProgressRef.current.value = 0 }
+      if (prizeLabelRef.current) prizeLabelRef.current.textContent = `${(PRIZE_THRESHOLD[foundation] ?? 1000).toLocaleString()} points to prize`
       state.score = 0
       state.combo = 0
-      state.swingSpeed = state.condemnedMode ? 0.080 : state.chaosMode ? 0.065 : 0.040
-      state.swingAmp   = state.condemnedMode ? 8.0   : state.chaosMode ? 7.2   : 5.8
+      state.swingSpeed = state.condemnedMode ? 0.080 : state.chaosMode ? 0.065 : 0.030
+      state.swingAmp   = state.condemnedMode ? 8.0   : state.chaosMode ? 7.2   : 5.0
       state.swingAngle = Math.random() * Math.PI * 2
       state.dropping = false
       state.toppling = false
@@ -2866,7 +2881,7 @@ export default function Game() {
       state.gameActive = true
       state.nextType = state.chaosMode
         ? HARD_TYPES[Math.floor(Math.random() * HARD_TYPES.length)]
-        : TYPES[Math.floor(Math.random() * TYPES.length)]
+        : 'scaf_flat'
       const base = makePiece('scaf_flat')
       // Apply foundation scale to the base — narrow base = harder, wide = easier landing target.
       base.scale.set(fnd.scale, 1, fnd.scale)
@@ -3019,6 +3034,12 @@ export default function Game() {
     const setFpsVisible = (vis) => { fpsSampler.visible = !!vis }
     engineRef.current = { startGame, generateScoreCard, setCameraFov, setPaused, setFpsVisible }
     engineRef.current.setRunEndListener = (fn) => { onRunEnd = fn }
+    engineRef.current.leaveRun = () => {
+      state.gameActive = false
+      state.paused = false
+      state.gameOverDelay = 0
+      state.nextSpawnFrames = 0
+    }
 
     // Input
     const onKey = (e) => {
@@ -3115,6 +3136,13 @@ export default function Game() {
       while (physicsAccum >= PHYSICS_STEP) {
         physicsAccum -= PHYSICS_STEP
       state.frameN++
+      if (state.hazardRestFrames > 0) state.hazardRestFrames--
+      if (state.nearTopple) state.hazardRestFrames = Math.max(state.hazardRestFrames, 90)
+      const hazardReady = state.hazardRestFrames === 0 && !state.wind.active &&
+        state.wind.telegraphFrames === 0 && state.projectiles.length === 0 &&
+        state.projectileWarnings.length === 0 && !state.pendingChaos && !state.chaosEvent
+
+      if (state.gameActive && state.nextSpawnFrames > 0 && --state.nextSpawnFrames === 0) spawnNext()
 
       // ── Worksite ambience: tape sway, bg crane drift, dust motes, worker head-tilt, spotlight follow ──
       for (const t of tapeSegments) {
@@ -3195,13 +3223,22 @@ export default function Game() {
         if (state.chaosEventFrames > 0) {
           state.chaosEventFrames--
           if (state.chaosEventFrames === 0) state.chaosEvent = null
-        } else {
+        } else if (state.pendingChaos) {
+          if (!state.nearTopple && state.hazardRestFrames <= 90 && --state.chaosWarningFrames <= 0) {
+            fireChaosEvent(state.pendingChaos)
+            state.pendingChaos = null
+            if (hazardLabelRef.current) hazardLabelRef.current.textContent = ''
+          }
+        } else if (hazardReady) {
           state.chaosTimer--
           if (state.chaosTimer <= 0) {
-            fireChaosEvent()
-            state.chaosTimer = state.condemnedMode
-              ? 360 + Math.floor(Math.random() * 180)  // 6-9s in condemned
-              : 480 + Math.floor(Math.random() * 240)  // 8-12s in chaos
+            const pool = state.condemnedMode ? ['surge', 'flip', 'quake', 'gravspike', 'tiltstorm', 'wiresnap'] : ['surge', 'flip', 'quake']
+            state.pendingChaos = pool[Math.floor(Math.random() * pool.length)]
+            state.chaosWarningFrames = 90
+            state.hazardRestFrames = 90
+            const labels = { surge: 'Speed surge', flip: 'Swing reversal', quake: 'Tower quake', gravspike: 'Gravity spike', tiltstorm: 'Tilt storm', wiresnap: 'Wire snap' }
+            if (hazardLabelRef.current) hazardLabelRef.current.textContent = `${labels[state.pendingChaos]} incoming — get ready`
+            state.chaosTimer = state.condemnedMode ? 240 + Math.random() * 120 : 300 + Math.random() * 180
           }
         }
         // Constant low-level ambient jitter — barely perceptible but adds unease.
@@ -3228,7 +3265,8 @@ export default function Game() {
             if (w.frames <= 0) w.active = false
           } else {
             w.timer--
-            if (w.timer <= 0 && (state.chaosMode || state.stackedPieces.length >= 8)) {
+            if (w.timer <= 0 && hazardReady && state.hazardRestFrames === 0 && (state.chaosMode || state.stackedPieces.length >= 8)) {
+              state.hazardRestFrames = 510
               w.dir = Math.random() < 0.5 ? -1 : 1
               w.telegraphFrames = 50 // ~0.83s lead, matches the warning popup
               spawnWindWarning(w.dir)
@@ -3309,15 +3347,15 @@ export default function Game() {
       if (state.lastLandedPiece && state.lastLandedSquash > 0) {
         state.lastLandedSquash *= 0.82
         if (state.lastLandedSquash < 0.01) {
-          state.lastLandedPiece.scale.set(1, 1, 1)
+          state.lastLandedPiece.scale.copy(state.lastLandedPiece.userData.landingScale)
           state.lastLandedSquash = 0
           state.lastLandedPiece = null
         } else {
           const t = state.lastLandedSquash
           state.lastLandedPiece.scale.set(
-            1 + 0.18 * t,
-            1 - 0.28 * t,
-            1 + 0.18 * t,
+            state.lastLandedPiece.userData.landingScale.x * (1 + 0.10 * t),
+            state.lastLandedPiece.userData.landingScale.y * (1 - 0.14 * t),
+            state.lastLandedPiece.userData.landingScale.z * (1 + 0.10 * t),
           )
         }
       }
@@ -3447,6 +3485,8 @@ export default function Game() {
         } else if (state.nearTopple && absAngle < toppleThresh * 0.35) {
           state.nearTopple = false
           spawnSavedPopup()
+          siteExperience.land(true, 0, state.towerHeight)
+          state.hazardRestFrames = Math.max(state.hazardRestFrames, 180)
         }
       }
 
@@ -3475,7 +3515,8 @@ export default function Game() {
       // Cooldown is rare + heavily randomized: long gaps with occasional bursts, never spam.
       if (state.gameActive) {
         state.projectileTimer -= 1
-        if (state.projectileTimer <= 0) {
+        if (state.projectileTimer <= 0 && hazardReady && state.hazardRestFrames === 0 && (state.chaosMode || state.stackedPieces.length >= 6)) {
+          state.hazardRestFrames = 210
           spawnProjectileWarning()
           const t = Math.floor(state.stackedPieces.length / 25)
           // Floor 0:    320 + random*360 = 5.3–11.3s between shots
@@ -3776,22 +3817,12 @@ export default function Game() {
         state.flash *= 0.85
         if (state.flash < 0.02) state.flash = 0
       }
-      if (state.frameN % 2 === 0) {
-        // Night-shift sky breathe (design.md §5/§7) — standard pulses gently
-        // around the steel-navy night sky (0x0b1220); chaos shifts toward a
-        // storm red-black undertone; condemned sinks to a near-black "dead
-        // site" pulse. Was a purple/magenta cycle that clashed with the theme.
-        const t = state.frameN * (state.condemnedMode ? 0.018 : state.chaosMode ? 0.010 : 0.003)
-        const baseR = state.condemnedMode ? 0.024 + Math.sin(t) * 0.012 : state.chaosMode ? 0.10 + Math.sin(t) * 0.05 : 0.043 + Math.sin(t) * 0.015
-        const baseG = state.condemnedMode ? 0.024 + Math.sin(t * 0.8) * 0.008 : state.chaosMode ? 0.043 + Math.sin(t * 1.3) * 0.015 : 0.070 + Math.sin(t * 0.8) * 0.015
-        const baseB = state.condemnedMode ? 0.031 + Math.sin(t * 0.7) * 0.010 : state.chaosMode ? 0.063 + Math.sin(t * 0.9) * 0.02 : 0.125 + Math.sin(t * 0.7) * 0.02
-        const f = state.flash
-        _scratchClearColor.setRGB(
-          baseR + (1 - baseR) * f,
-          baseG + (1 - baseG) * f,
-          baseB + (1 - baseB) * f,
-        )
-        renderer.setClearColor(_scratchClearColor)
+      siteExperience.update(state, _scratchClearColor)
+      renderer.setClearColor(_scratchClearColor)
+      if (altitudeLabelRef.current) {
+        const floors = state.stackedPieces.length - 1
+        const zone = floors >= 90 ? 'Legend zone' : floors >= 60 ? 'Thin air' : floors >= 35 ? 'Cloud deck' : floors >= 15 ? 'Rooftop line' : 'The yard'
+        if (altitudeLabelRef.current.textContent !== zone) altitudeLabelRef.current.textContent = zone
       }
 
       // Game-over delay
@@ -3828,6 +3859,7 @@ export default function Game() {
       canvas.removeEventListener('pointerdown', onPointer)
       canvas.removeEventListener('contextmenu', onContextMenu)
       canvas.removeEventListener('webglcontextlost', onContextLost)
+      siteExperience.dispose()
       popupLayer.remove() // tears down every in-flight banner/popup/warning
       for (const g of geoCache.values()) g.dispose()
       geoCache.clear()
@@ -3839,34 +3871,28 @@ export default function Game() {
   }, [])
 
   const handleStart = () => {
-    if (!player) return  // form is gating the Play button; this is a safety net
     setShowPause(false)
     setShowSettings(false)
-    setShowHowToPlay(true)
+    setShowHowToPlay(false)
+    setShowStart(false)
+    setShowGameOver(false)
+    setShowRegistration(false)
+    setLastEntryId(null)
+    savedRunRef.current = false
+    engineRef.current?.startGame(foundation)
   }
   const handleBeginRun = () => {
     setShowHowToPlay(false)
     setShowStart(false)
     setShowGameOver(false)
+    setLastEntryId(null)
+    savedRunRef.current = false
     engineRef.current?.startGame(foundation)
   }
   const handleSaveCard = () => {
     engineRef.current?.generateScoreCard(player?.name)
   }
 
-  // Hold-to-restart — long-press (2 s) anywhere on the game-over screen that
-  // isn't a button restarts the same mode instantly, skipping the briefing.
-  // Removes all button friction for repeat plays at a busy booth.
-  const holdTimerRef = useRef(null)
-  const handleHoldStart = (e) => {
-    if (e.target.closest('button, input, a')) return
-    clearTimeout(holdTimerRef.current)
-    holdTimerRef.current = setTimeout(() => {
-      setShowGameOver(false)
-      engineRef.current?.startGame(foundation)
-    }, 2000)
-  }
-  const handleHoldCancel = () => clearTimeout(holdTimerRef.current)
   const handleResume = () => {
     setShowPause(false)
     setShowSettings(false)
@@ -3878,6 +3904,8 @@ export default function Game() {
     setShowSettings(false)
     setShowGuide(false)
     engineRef.current?.setPaused(false)
+    savedRunRef.current = false
+    setLastEntryId(null)
     engineRef.current?.startGame(foundation)
   }
   const handleQuit = () => {
@@ -3885,7 +3913,8 @@ export default function Game() {
     setShowSettings(false)
     setShowGuide(false)
     setShowGameOver(false)
-    engineRef.current?.setPaused(false)
+    setPlayer(null)
+    engineRef.current?.leaveRun()
     setShowStart(true)
   }
 
@@ -3911,50 +3940,33 @@ export default function Game() {
     try { localStorage.setItem('radian_show_fps', showFps ? '1' : '0') } catch { /* noop */ }
   }, [showFps])
 
-  // Persist the active player so they don't have to re-enter on every run.
-  useEffect(() => {
-    try {
-      if (player) localStorage.setItem('radian_player', JSON.stringify(player))
-      else localStorage.removeItem('radian_player')
-    } catch { /* noop */ }
-  }, [player])
-
-  // When a run ends, push the score + player profile into the leaderboard.
-  // Local write is synchronous; backend POST is fire-and-forget. Profile is
-  // read from a ref so the run-end callback always sees the current value.
-  const playerRef = useRef(player)
-  useEffect(() => { playerRef.current = player }, [player])
-  useEffect(() => {
-    const eng = engineRef.current
-    if (!eng?.setRunEndListener) return
-    eng.setRunEndListener((r) => {
-      if (!r || r.score <= 0) return
-      const p = playerRef.current || {}
-      const entry = {
-        ...r,
-        name: (p.name || 'ANON').trim() || 'ANON',
-        email: (p.email || '').trim(),
-        phone: (p.phone || '').trim(),
-      }
-      const { id } = addLocalScore(entry)
-      setLastEntryId(id)
-      // Best-effort sync — failure is silent.
-      submitOnline(entry)
-    })
-    return () => eng.setRunEndListener?.(null)
-  }, [])
+  const handleRegisterScore = (profile) => {
+    if (savedRunRef.current || recap.score <= 0) return
+    savedRunRef.current = true
+    const entry = { ...recap, ...profile }
+    const { id } = addLocalScore(entry)
+    setLastEntryId(id)
+    setPlayer(profile)
+    setShowRegistration(false)
+    submitOnline(entry)
+  }
 
   // Per-mode best for the just-finished run — the local board already includes
   // this run (onRunEnd writes it before the overlay mounts), so the top match
   // is either an older best or the run itself (= new personal best).
   const modeBest = showGameOver
-    ? loadLocalLeaderboard().find((e) =>
-        e.foundation === recap.foundation && (!player?.name || e.name === player.name)) || null
+    ? (player ? loadLocalLeaderboard().find((e) =>
+        e.foundation === recap.foundation && e.name === player.name) : null) || null
     : null
   const modeLabel = FOUNDATION_LABEL[recap.foundation] || recap.foundation
 
   const handleNewUser = () => {
     setPlayer(null)
+    setShowRegistration(false)
+    setShowModes(false)
+    setFoundation('standard')
+    setLastEntryId(null)
+    savedRunRef.current = false
     setShowGameOver(false)
     setShowPause(false)
     setShowLeaderboard(false)
@@ -3962,11 +3974,44 @@ export default function Game() {
     setShowStart(true)
   }
 
+  // UI-only idle timer: relinquish visitor identity on unattended menus/results.
+  useEffect(() => {
+    if (!showStart && !showGameOver) return
+    let timer
+    const reset = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        setPlayer(null)
+        setShowRegistration(false)
+        setShowLeaderboard(false)
+        setShowHowToPlay(false)
+        setShowGameOver(false)
+        setShowModes(false)
+        setFoundation('standard')
+        setLastEntryId(null)
+        savedRunRef.current = false
+        setShowStart(true)
+      }, 90000)
+    }
+    reset()
+    window.addEventListener('pointerdown', reset)
+    window.addEventListener('keydown', reset)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('pointerdown', reset)
+      window.removeEventListener('keydown', reset)
+    }
+  }, [showStart, showGameOver])
+
   return (
-    <div className="rts-root">
+    <div className="rts-root kiosk-root">
       <canvas id="canvas" ref={canvasRef} />
 
-      <div id="hud">
+      <div id="hud" style={{ visibility: showStart || showGameOver || showHowToPlay ? 'hidden' : 'visible' }}>
+        <div className="altitude-label" ref={altitudeLabelRef}>The yard</div>
+        <div className="hazard-label" ref={hazardLabelRef} role="status" />
+        <div className="prize-progress"><span ref={prizeLabelRef}>1,000 points to prize</span><progress ref={prizeProgressRef} max="1000" value="0" /></div>
+        <button className="pause-touch" onClick={() => { engineRef.current?.setPaused(true); setShowPause(true) }} aria-label="Pause game">Ⅱ</button>
         <div id="score-panel">
           <div className="game-title">Radian Tower Stacker</div>
           <div id="score" ref={scoreRef}>0</div>
@@ -3991,7 +4036,7 @@ export default function Game() {
         <div id="chaos-indicator" ref={chaosIndicatorRef} style={{display:'none'}}>
           <span>⚡</span> CHAOS MODE <span>⚡</span>
         </div>
-        <div id="hint"><span className="key">SPACE</span> to drop · tap anywhere</div>
+        <div id="hint">Tap to drop · Aim for the centre</div>
 
         {showFps && <div id="fps-counter" ref={fpsRef}>— FPS</div>}
 
@@ -4006,52 +4051,32 @@ export default function Game() {
 
       {showStart && (
         <div className="screen" id="start-screen">
-          <BrandBackdrop />
-          <div className="brand-block">
-            <img className="brand-logo" src="/logo.png" alt="Radian" />
-            <div className="brand-wordmark">RADIAN</div>
-            <div className="brand-tagline">Scaffolding · Built to Stand</div>
+          <div className="arcade-brand">
+            <img src="/logo.png" alt="Radian H.A. Limited" />
+            <div><strong>RADIAN</strong><span>H.A. LIMITED</span></div>
+            <span className="arcade-edition">THE BOOTH CHALLENGE</span>
           </div>
-          <div className="screen-title">Tower<br /><span className="yl">Stacker</span></div>
-          <div className="screen-sub">Stack the scaffold · Beat the wobble · Build the skyline</div>
-
-          {!player ? (
-            <PlayerForm onSubmit={(p) => setPlayer(p)} />
-          ) : (
-            <>
-              <div className="player-greeting">
-                Welcome, <span className="yl">{player.name}</span>
-                <button className="link-btn" onClick={() => setPlayer(null)}>Not you?</button>
-              </div>
-              <div className="foundation-picker">
-                <div className="foundation-label">Choose your foundation</div>
-                <div className="foundation-row">
-                  {Object.entries(FOUNDATIONS).map(([key, fnd]) => (
-                    <button
-                      key={key}
-                      data-key={key}
-                      className={'foundation-btn' + (foundation === key ? ' selected' : '')}
-                      onClick={() => setFoundation(key)}
-                    >
-                      <div className="foundation-mult">{fnd.mult}×</div>
-                      <div className="foundation-name">{fnd.label}</div>
-                      <div className="foundation-diff" aria-hidden="true">
-                        {[1, 2, 3, 4, 5].map((i) => (
-                          <span key={i} className={'diff-chev' + (i <= fnd.diff ? ' on' : '')} />
-                        ))}
-                      </div>
-                      <div className="foundation-sub">{fnd.sub}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="start-actions">
-                <button className="big-btn" onClick={handleStart}>Play</button>
-                <button className="big-btn secondary" onClick={() => setShowLeaderboard(true)}>Leaderboard</button>
-              </div>
-            </>
-          )}
-          <div className="brand-footer">A Radian Scaffolding experience</div>
+          <div className="arcade-heading">
+            <span className="arcade-eyebrow">A LITTLE SKILL. A LOT OF WOBBLE.</span>
+            <h1>TOWER<span>STACKER<span className="title-bolt" aria-hidden="true">!</span></span></h1>
+            <p>How high can you go before it all goes sideways?</p>
+          </div>
+          <ArcadeAttractStage />
+          <div className="arcade-steps" aria-label="How to play"><span><b>01</b> TAP</span><i aria-hidden="true">→</i><span><b>02</b> STACK</span><i aria-hidden="true">→</i><span><b>03</b> WIN</span></div>
+          <div className="prize-invite arcade-prize">
+            <span className="prize-star" aria-hidden="true">★</span>
+            <div><span>YOUR NEXT BUILD COULD WIN</span><strong>{(PRIZE_THRESHOLD[foundation] ?? 1000).toLocaleString()} points = prize target</strong><small>Show your result to our team · One prize per person</small></div>
+          </div>
+          <div className="start-actions">
+            <button className="big-btn arcade-play" onClick={handleStart}>Tap to Play <span aria-hidden="true">↗</span></button>
+            <div className="quick-instructions">One tap drops a piece. Timing is everything.</div>
+            <button className="link-btn difficulty-toggle" onClick={() => setShowModes(!showModes)} aria-expanded={showModes} aria-controls="attract-modes">{FOUNDATION_LABEL[foundation]} <span>· Change difficulty {showModes ? '−' : '+'}</span></button>
+          </div>
+          {showModes && <div className="foundation-picker" id="attract-modes"><div className="foundation-row">
+            {Object.entries(FOUNDATIONS).map(([key, fnd]) => <button key={key} aria-pressed={foundation === key} className={'foundation-btn' + (foundation === key ? ' selected' : '')} onClick={() => { setFoundation(key); setShowModes(false) }}><div className="foundation-name">{fnd.label}</div><div className="foundation-sub">{fnd.mult}× score</div></button>)}
+          </div></div>}
+          <div className="attract-links"><button className="link-btn" onClick={() => setShowHowToPlay(true)}>How to play</button><button className="link-btn" onClick={() => setShowLeaderboard(true)}>Leaderboard</button></div>
+          <div className="brand-footer">Big stacks. Real scaffolding expertise.<br /><strong>Meet the Radian team right here at the booth.</strong></div>
         </div>
       )}
       {showHowToPlay && (
@@ -4138,10 +4163,6 @@ export default function Game() {
         <div
           className="screen"
           id="gameover-screen"
-          onPointerDown={handleHoldStart}
-          onPointerUp={handleHoldCancel}
-          onPointerLeave={handleHoldCancel}
-          onPointerCancel={handleHoldCancel}
         >
           <div className="brand-block small">
             <img className="brand-logo" src="/logo.png" alt="Radian" />
@@ -4175,24 +4196,26 @@ export default function Game() {
                 : <>Your best in {modeLabel}: <span className="yl">{modeBest.score.toLocaleString()}</span></>}
             </div>
           )}
-          {player && (
+          {lastEntryId && player && (
             <div className="player-greeting small">
               Saved as <span className="yl">{player.name}</span>
             </div>
           )}
           <div className="gameover-actions">
-            <button className="big-btn" onClick={handleStart}>Build Again</button>
+            {!lastEntryId && recap.score > 0 && <button className="big-btn" onClick={() => setShowRegistration(true)}>Save My Score</button>}
+            <button className="big-btn secondary" onClick={handleStart}>Try Again</button>
             <button className="big-btn secondary" onClick={() => { setLeaderboardFromGameOver(true); setShowLeaderboard(true) }}>Leaderboard</button>
             <button className="big-btn secondary" onClick={handleSaveCard}>Save Score Card</button>
-            <button className="big-btn secondary" onClick={handleNewUser}>New User</button>
+            <button className="big-btn secondary" onClick={handleNewUser}>Next Player</button>
           </div>
           <div className="hold-hint">…or hold anywhere for 2 s to rebuild instantly</div>
           <div className="brand-footer">
-            Want a real tower that stays up? <span className="cta">Radian Scaffolding</span>
+            Meet <span className="cta">Radian H.A. Limited</span><br />Ask our booth team about scaffolding for your next project.
           </div>
         </div>
       )}
 
+      {showRegistration && <div className="screen registration-screen"><div className="screen-title">Make it <span className="yl">official.</span></div><p>Your score: {recap.score.toLocaleString()}</p><PlayerForm onSubmit={handleRegisterScore} /><button className="link-btn" onClick={() => setShowRegistration(false)}>Back to result</button></div>}
       {showLeaderboard && (
         <LeaderboardScreen
           onClose={() => { setShowLeaderboard(false); setLeaderboardFromGameOver(false) }}
@@ -4264,6 +4287,42 @@ const PRIZE_THRESHOLD = { narrow: 1000, standard: 1000, wide: 1000, chaos: 2000,
 // Branded animated backdrop used behind overlay screens. Scrolling diagonal
 // "RADIAN SCAFFOLDING" hazard marquees + a few drifting ghost logos. Pure
 // pointer-events: none so the screen content stays interactive.
+function ArcadeAttractStage() {
+  return (
+    <div className="arcade-stage" aria-hidden="true">
+      <span className="arcade-sticker sticker-perfect">NAILED IT! <b>✦</b></span>
+      <span className="arcade-sticker sticker-wobble">STEADY…</span>
+      <svg viewBox="0 0 480 280" focusable="false">
+        <defs>
+          <radialGradient id="attract-spot"><stop stopColor="#ffbd35" stopOpacity=".24" /><stop offset="1" stopColor="#ffbd35" stopOpacity="0" /></radialGradient>
+          <linearGradient id="attract-steel" x2="0" y2="1"><stop stopColor="#b9cedd" /><stop offset="1" stopColor="#536b83" /></linearGradient>
+        </defs>
+        <ellipse cx="240" cy="155" rx="220" ry="120" fill="url(#attract-spot)" />
+        <path d="M35 255H445M65 269H415" stroke="#586c83" strokeWidth="2" />
+        <ellipse cx="248" cy="250" rx="140" ry="12" fill="#050a12" opacity=".8" />
+        <g className="hero-stack">
+          {[0, 1, 2].map(i => <g key={i} transform={`translate(${141 + i * 9} ${196 - i * 53})`}>
+            <path d="M0 0H164V51H0Z M0 0L164 51M164 0L0 51" fill="#182c42" stroke="url(#attract-steel)" strokeWidth="5" strokeLinejoin="round" />
+            <path d="M164 0L188 -10V41L164 51 M164 0H0L24 -10H188" fill="#2d4659" stroke="#7f96a9" strokeWidth="3" />
+            <path d="M0 0H164" stroke={i === 1 ? '#ff7a32' : '#ffcf48'} strokeWidth="8" />
+            {[0, 164].map(x => <g key={x}><circle cx={x} cy="0" r="4" fill="#fff0bc" /><circle cx={x} cy="51" r="4" fill="#b9cedd" /></g>)}
+          </g>)}
+        </g>
+        <g className="hero-delivery">
+          <path d="M240 -20V18M240 18L168 39M240 18L332 39" stroke="#93a6bc" strokeWidth="2" fill="none" />
+          <rect x="232" y="10" width="16" height="15" rx="3" fill="#ffcf48" />
+          <path d="M168 39H332V76H168Z M168 39L332 76M332 39L168 76" fill="#203951" stroke="#b9cedd" strokeWidth="4" />
+          <path d="M168 39H332" stroke="#ffcf48" strokeWidth="8" />
+        </g>
+        <g className="hero-sparks" stroke="#ffdc76" strokeWidth="3" strokeLinecap="round"><path d="M120 120L109 113M123 138L109 142M350 92L360 82M353 109L369 110" /></g>
+        <g fill="#ff9446"><path d="M75 249L86 220L97 249Z" /><path d="M385 249L396 220L407 249Z" /></g>
+        <g stroke="#fff0cb" strokeWidth="4"><path d="M80 237H92M390 237H402" /></g>
+      </svg>
+      <span className="stage-caption">BUILD IT. BALANCE IT. BRAG ABOUT IT.</span>
+    </div>
+  )
+}
+
 function BrandBackdrop() {
   const strip = 'RADIAN SCAFFOLDING ★ BUILT TO STAND ★ '
   return (
@@ -4528,7 +4587,7 @@ function PlayerForm({ onSubmit }) {
 
   return (
     <form className="player-form" onSubmit={handleSubmit}>
-      <div className="player-form-title">Register to Play</div>
+      <div className="player-form-title">Save your score</div>
       <div className="player-form-sub">Name required · Email & phone optional</div>
       <div className="player-form-row">
         <label className="player-form-label" htmlFor="pf-name">Name</label>
@@ -4568,7 +4627,7 @@ function PlayerForm({ onSubmit }) {
         />
       </div>
       {error && <div className="player-form-error">{error}</div>}
-      <button className="big-btn" type="submit">Continue</button>
+      <button className="big-btn" type="submit">Save Score</button>
       <div className="player-form-footer">
         Your details stay with Radian Scaffolding for this conference.
       </div>

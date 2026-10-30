@@ -1899,6 +1899,79 @@
   .rts-root .htp-prize-text { font-size: 14px; }
 }
 
+/* Portrait conference kiosk: calm surfaces and one clear primary action. */
+.kiosk-root { --font-display: 'Saira', 'Segoe UI', sans-serif; }
+.kiosk-root .screen { box-sizing: border-box; padding: 32px 24px; gap: 14px; overflow-y: auto; justify-content: safe center; background: radial-gradient(ellipse at 50% 35%, #203047 0, #0b1220 65%); }
+.kiosk-root .screen::before, .kiosk-root .screen::after { display: none; }
+.kiosk-root .screen-title { font-weight: 800; letter-spacing: -2px; text-transform: none; text-shadow: none; font-size: clamp(42px, 7vw, 88px); }
+.kiosk-root .screen-sub { letter-spacing: .5px; text-transform: none; margin: 0; max-width: 460px; }
+.kiosk-root .brand-block { margin: 0; }
+.kiosk-root .brand-logo { width: 64px; height: 64px; animation: none; filter: none; }
+.kiosk-root .brand-wordmark { font-size: 26px; letter-spacing: 5px; text-shadow: none; }
+.kiosk-root .brand-tagline { font-size: 12px; letter-spacing: 1px; }
+.kiosk-root .brand-backdrop { display: none; }
+.kiosk-root .big-btn { min-height: 64px; border: 1px solid transparent; border-radius: 16px; background: var(--amber); color: #151b24; box-shadow: none; font-family: var(--font-body); font-weight: 800; letter-spacing: .4px; text-shadow: none; padding: 16px 30px; }
+.kiosk-root .big-btn::before, .kiosk-root .big-btn::after { display: none; }
+.kiosk-root .big-btn.secondary { background: #ffffff09; color: var(--text-hi); border-color: #ffffff26; }
+.kiosk-root button:focus-visible, .kiosk-root input:focus-visible { outline: 3px solid white; outline-offset: 4px; }
+.kiosk-root .link-btn { min-height: 48px; padding: 10px 14px; color: var(--text-mid); }
+.kiosk-root .start-actions { display: flex; flex-direction: column; width: min(100%, 460px); margin: 0; gap: 4px; }
+.kiosk-root .quick-instructions { text-align: center; font-size: 15px; color: var(--text-mid); margin: 10px 0 0; }
+.kiosk-root .prize-invite { display: grid; gap: 4px; text-align: center; max-width: 440px; }
+.kiosk-root .prize-invite span { color: var(--amber); letter-spacing: 2px; font-weight: 700; font-size: 13px; }
+.kiosk-root .prize-invite strong { font-size: 32px; font-variant-numeric: tabular-nums; }
+.kiosk-root .prize-invite small { color: var(--text-mid); font-size: 13px; }
+.kiosk-root .attract-links { display: flex; gap: 16px; }
+.kiosk-root .brand-footer { margin: 0; max-width: 480px; text-align: center; font-size: 13px; letter-spacing: .5px; }
+.kiosk-root .foundation-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.kiosk-root .foundation-btn { min-width: 100px; min-height: 64px; border-radius: 12px; box-shadow: none; }
+.kiosk-root .attract-tower { width: 180px; height: 190px; position: relative; margin: 18px 0 8px; filter: drop-shadow(0 12px 22px #0008); }
+.kiosk-root .attract-floor { position: absolute; bottom: calc(var(--floor) * 44px); left: 0; width: 180px; height: 42px; border: 4px solid #9aa7b8; border-top: 7px solid var(--amber); box-sizing: border-box; background: #ffffff06; }
+.kiosk-root .attract-floor i { position: absolute; height: 2px; width: 168px; top: 14px; left: 0; background: #6c829d; transform: rotate(10deg); }
+.kiosk-root .attract-floor i + i { transform: rotate(-10deg); }
+.kiosk-root .attract-floor:nth-child(4) { animation: kiosk-swing 3s ease-in-out infinite alternate; }
+.kiosk-root .attract-hook { position: absolute; top: -24px; left: 89px; height: 25px; border-left: 2px solid #9aa7b8; }
+@keyframes kiosk-swing { from { transform: translateX(-25px) translateY(-12px); } to { transform: translateX(25px) translateY(-12px); } }
+.kiosk-root .prize-progress { position: fixed; top: 150px; left: 50%; transform: translateX(-50%); width: min(52vw, 360px); text-align: center; color: var(--amber-bright); font-size: 14px; }
+.kiosk-root .prize-progress progress { display: block; width: 100%; height: 7px; margin-top: 8px; border: 0; border-radius: 6px; overflow: hidden; background: #ffffff20; }
+.kiosk-root progress::-webkit-progress-bar { background: #ffffff20; }
+.kiosk-root progress::-webkit-progress-value { background: var(--amber); transition: width .25s ease; }
+.kiosk-root progress::-moz-progress-bar { background: var(--amber); }
+.kiosk-root .pause-touch { position: fixed; bottom: 22px; left: 22px; width: 56px; height: 56px; border: 1px solid #ffffff30; border-radius: 16px; color: white; background: #172233; pointer-events: auto; font-size: 24px; }
+.kiosk-root #hud::after { display: none; }
+.kiosk-root #score { text-shadow: none; }
+.kiosk-root #hint { bottom: 34px; font-size: 16px; letter-spacing: .3px; }
+.kiosk-root #balance-wrap { bottom: 92px; width: min(60vw, 320px); }
+.kiosk-root #brand-mark { display: none; }
+.kiosk-root .gameover-actions { display: grid; grid-template-columns: 1fr 1fr; width: min(100%, 540px); gap: 10px; }
+.kiosk-root .gameover-actions .big-btn { font-size: 16px; padding: 12px; }
+.kiosk-root .result-prize { max-width: 480px; text-align: center; color: var(--amber-bright); padding: 16px; border: 1px solid #ffb40044; border-radius: 16px; }
+.kiosk-root .registration-screen { z-index: 45; }
+.kiosk-root .altitude-label { position: fixed; top: 196px; left: 50%; transform: translateX(-50%); color: #b6c2d4; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; }
+.kiosk-root .hazard-label { position: fixed; top: 224px; left: 50%; transform: translateX(-50%); width: max-content; max-width: 80vw; box-sizing: border-box; padding: 12px 18px; border: 1px solid #ffb40080; border-radius: 12px; background: #172233f2; color: #ffd75e; font-weight: 700; text-align: center; }
+.kiosk-root .hazard-label:empty { display: none; }
+/* Projectile warnings stay legible until the simulation removes them. */
+.proj-warn, .proj-warn .tri, .proj-warn .beam { animation-fill-mode: forwards; }
+.proj-warn { animation: none; opacity: 1; }
+.kiosk-root .player-form { width: min(100%, 420px); box-sizing: border-box; }
+.kiosk-root .player-form-input { min-height: 52px; font-size: 18px; }
+@media (orientation: portrait) {
+  .kiosk-root #start-screen { gap: clamp(10px, 1.6vh, 26px); }
+  .kiosk-root #next-wrap { top: 24px; right: 18px; transform: scale(.8); transform-origin: top right; }
+  .kiosk-root #height-badge { top: 24px; left: 18px; padding: 12px; }
+  .kiosk-root #score-panel { top: 24px; }
+}
+@media (max-height: 800px) {
+  .kiosk-root .screen { gap: 9px; padding: 20px; }
+  .kiosk-root .attract-tower { height: 130px; transform: scale(.7); margin: -12px 0; }
+  .kiosk-root .brand-logo { width: 42px; height: 42px; }
+  .kiosk-root .screen-title { font-size: 42px; }
+  .kiosk-root .big-btn { min-height: 54px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kiosk-root .attract-floor { animation: none !important; }
+  .kiosk-root progress::-webkit-progress-value { transition: none; }
+}
 /* ─────────────────────────────────────────────────────────────────────────
    Reduced motion — kill the ambient/decorative loops, keep functional cues
    (telegraph arrows still appear, just without the pulse).
@@ -1917,4 +1990,84 @@
   .rts-root .link-btn {
     transition: none !important;
   }
+}
+
+/* Attract screen: arcade energy around a stable, readable action area. */
+.kiosk-root #start-screen {
+  gap: clamp(10px, 1.2vh, 22px);
+  padding: clamp(22px, 4vh, 64px) 24px;
+  background: radial-gradient(ellipse at 50% 34%, #29344b 0, #101b2d 42%, #080e19 85%);
+  isolation: isolate;
+}
+.kiosk-root #start-screen > * { flex-shrink: 0; }
+.kiosk-root #start-screen::before {
+  display: block; position: fixed; inset: 0; height: auto; z-index: -1; opacity: .2;
+  background-image: linear-gradient(#6581a51c 1px, transparent 1px), linear-gradient(90deg, #6581a51c 1px, transparent 1px);
+  background-size: 48px 48px; transform: rotate(-8deg) scale(1.25);
+}
+.kiosk-root .arcade-brand { display: flex; align-items: center; gap: 12px; width: min(100%, 600px); }
+.kiosk-root .arcade-brand img { width: 48px; height: 48px; object-fit: contain; }
+.kiosk-root .arcade-brand strong { display: block; font-size: 24px; letter-spacing: 4px; line-height: 1.15; }
+.kiosk-root .arcade-brand div > span { color: #aabbd0; font-size: 10px; letter-spacing: 3px; }
+.kiosk-root .arcade-edition { margin-left: auto; border: 1px solid #8da5c03b; border-radius: 6px; padding: 8px 10px; font-size: 10px; letter-spacing: 1.5px; color: #b8c8dc; }
+.kiosk-root .arcade-heading { text-align: center; margin-top: 12px; }
+.kiosk-root .arcade-eyebrow { font-size: clamp(10px, 1.4vw, 14px); letter-spacing: 2px; color: #ffcc64; font-weight: 700; }
+.kiosk-root .arcade-heading h1 { margin: 12px 0; font-family: var(--font-body); font-size: clamp(54px, 9.5vw, 112px); font-weight: 700; line-height: .85; letter-spacing: -4px; color: #f4f6fb; text-shadow: 0 5px 0 #050b16; }
+.kiosk-root .arcade-heading h1 > span { display: block; color: #ffcf48; transform: rotate(-3deg); margin-top: 9px; }
+.kiosk-root .title-bolt { display: inline-block; color: #ff8054; transform: rotate(12deg); margin-left: 4px; }
+.kiosk-root .arcade-heading p { color: #bdcbe0; font-size: clamp(13px, 1.7vw, 19px); margin: 18px 0 0; padding: 0 8px; }
+.kiosk-root .arcade-stage { width: min(100%, 600px); height: clamp(175px, 25vh, 350px); position: relative; }
+.kiosk-root .arcade-stage svg { display: block; width: 100%; height: calc(100% - 18px); overflow: visible; }
+.kiosk-root .hero-stack { transform-origin: 240px 249px; animation: hero-wobble 5s ease-in-out infinite; }
+.kiosk-root .hero-delivery { transform-origin: 240px 0; animation: hero-deliver 3s ease-in-out infinite; }
+.kiosk-root .hero-sparks { animation: hero-spark 3s ease-in-out infinite; }
+.kiosk-root .arcade-sticker { position: absolute; z-index: 1; font-size: clamp(11px, 1.7vw, 17px); letter-spacing: 1px; font-weight: 700; padding: 9px 13px; border: 2px solid; border-radius: 8px; box-shadow: 0 5px 0 #050b164d; }
+.kiosk-root .sticker-perfect { top: 14%; left: 1%; transform: rotate(-10deg); background: #b7f6cf; border-color: #ddffe9; color: #153d35; }
+.kiosk-root .sticker-perfect b { padding-left: 5px; }
+.kiosk-root .sticker-wobble { bottom: 19%; right: 0; transform: rotate(9deg); background: #ff915d; border-color: #ffc6a6; color: #442216; }
+.kiosk-root .stage-caption { position: absolute; bottom: 0; left: 0; right: 0; text-align: center; font-size: 10px; letter-spacing: 2.3px; color: #7e97b8; }
+.kiosk-root .arcade-steps { display: flex; align-items: center; justify-content: center; gap: clamp(10px, 3vw, 32px); font-weight: 700; font-size: clamp(15px, 2vw, 21px); }
+.kiosk-root .arcade-steps b { font-size: 10px; color: #ffcf48; margin-right: 5px; vertical-align: middle; }
+.kiosk-root .arcade-steps i { font-style: normal; font-weight: 400; color: #718ba8; }
+.kiosk-root #start-screen .arcade-prize { display: flex; align-items: center; gap: 16px; width: min(100%, 520px); max-width: 520px; box-sizing: border-box; padding: 15px 20px; border: 1px solid #ffce484a; border-radius: 16px; background: #ffcf4809; text-align: left; }
+.kiosk-root #start-screen .prize-star { font-size: 38px; line-height: 1; color: #ffcf48; }
+.kiosk-root .arcade-prize div { display: grid; gap: 2px; }
+.kiosk-root .arcade-prize div > span { font-size: 10px; letter-spacing: 1.6px; color: #ffcf48; }
+.kiosk-root .arcade-prize strong { font-size: clamp(18px, 2.7vw, 28px); letter-spacing: -.5px; color: #fff4d7; }
+.kiosk-root .arcade-prize small { font-size: 11px; color: #a6b7ce; }
+.kiosk-root #start-screen .start-actions { width: min(100%, 520px); }
+.kiosk-root #start-screen .arcade-play { display: flex; justify-content: space-between; align-items: center; width: 100%; min-height: 78px; padding: 16px 30px; font-size: clamp(24px, 3vw, 34px); background: #ffcf48; border: 1px solid #ffe7a4; box-shadow: 0 6px 0 #ae7619, 0 12px 35px #ffb4001c; }
+.kiosk-root #start-screen .arcade-play:hover { background: #ffde79; }
+.kiosk-root #start-screen .arcade-play:active { transform: translateY(3px); box-shadow: 0 3px 0 #ae7619; }
+.kiosk-root .arcade-play > span { font-size: 32px; font-weight: 400; }
+.kiosk-root #start-screen .quick-instructions { margin-top: 16px; color: #aebfd5; font-size: 13px; }
+.kiosk-root #start-screen .difficulty-toggle { font-size: 12px; font-weight: 700; color: #e4ebf7; }
+.kiosk-root .difficulty-toggle span { font-weight: 400; color: #97adc7; }
+.kiosk-root #start-screen .attract-links { border-top: 1px solid #ffffff12; width: min(100%, 520px); justify-content: center; gap: 24px; }
+.kiosk-root #start-screen .attract-links button { font-size: 13px; text-decoration: none; }
+.kiosk-root #start-screen .brand-footer { font-size: 11px; line-height: 1.7; color: #8198b5; }
+.kiosk-root #start-screen .brand-footer strong { font-weight: 400; color: #bac9db; }
+@keyframes hero-wobble { 0%, 100% { transform: rotate(-2deg); } 45% { transform: rotate(3deg); } 65% { transform: rotate(-1deg); } }
+@keyframes hero-deliver { 0%, 100% { transform: rotate(-8deg) translateY(-5px); } 50% { transform: rotate(7deg) translateY(3px); } }
+@keyframes hero-spark { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@media (max-width: 420px) {
+  .kiosk-root #start-screen { padding-inline: 18px; }
+  .kiosk-root .arcade-edition { font-size: 8px; letter-spacing: .5px; padding: 7px; }
+  .kiosk-root .arcade-brand strong { font-size: 20px; }
+  .kiosk-root .arcade-sticker { padding: 6px 8px; font-size: 10px; }
+  .kiosk-root #start-screen .arcade-prize { padding: 12px; gap: 10px; }
+}
+@media (max-height: 850px) {
+  .kiosk-root #start-screen { gap: 8px; padding-block: 20px; }
+  .kiosk-root .arcade-heading { margin-top: 0; }
+  .kiosk-root .arcade-heading h1 { font-size: 52px; margin: 8px 0; }
+  .kiosk-root .arcade-heading p { margin-top: 12px; font-size: 13px; }
+  .kiosk-root .arcade-stage { height: 158px; max-width: 400px; }
+  .kiosk-root .arcade-brand img { width: 38px; height: 38px; }
+  .kiosk-root #start-screen .arcade-play { min-height: 64px; }
+  .kiosk-root #start-screen .arcade-prize { padding-block: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kiosk-root .hero-stack, .kiosk-root .hero-delivery, .kiosk-root .hero-sparks { animation: none; }
+  .kiosk-root #start-screen .arcade-play { transition: none; }
 }
