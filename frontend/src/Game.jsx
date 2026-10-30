@@ -18,6 +18,16 @@ function formatDate(iso) {
   } catch { return '' }
 }
 
+// Shared brand hexes — mirror the CSS custom properties in Game.css (:root)
+// so the 3D world and the HUD read as one art direction instead of drifting apart.
+const BRAND = {
+  hazard: 0xffe94d,   // --hazard
+  amber: 0xffb400,    // --amber
+  amberBright: 0xffd75e, // --amber-bright
+  orange: 0xff7a00,   // --orange
+  danger: 0xff3355,   // --danger — reserved for hazard/chaos telegraphs only
+}
+
 const TYPES = [
   'scaf_flat',
   'scaf_house',
@@ -32,29 +42,32 @@ const TYPES = [
   'scaf_rocket_pad',
 ]
 
-const COLORS = [
-  0xff3355, 0xff7700, 0xffe94d, 0x44ff77,
-  0x00d4ff, 0x8855ff, 0xff55cc, 0x55ffee,
-  0xff1166, 0xffcc00, 0x00ffbb, 0xdd33ff,
-  0xff6600, 0x66ff33, 0x3388ff, 0xff0088,
-]
-
-// Curated 3-colour palettes [frame, ledger, decking] — every combo is
-// pre-validated so pieces always look intentional rather than randomly clashing.
+// Curated 3-colour palettes [frame, ledger, decking] — industrial paint codes
+// (hazard yellow, safety orange, galvanized steel, powder-coat blue, oxide red,
+// timber decking) so the tower reads as a real jobsite instead of neon candy.
+// See design.md §7. Palette 0 is the literal brand colorway and is weighted
+// 2x by pickPiecePalette() so towers trend Radian-yellow in booth photos.
 const PIECE_PALETTES = [
-  [0xff3355, 0xffe94d, 0xff7700],  // red · yellow · orange
-  [0x00d4ff, 0x8855ff, 0x55ffee],  // cyan · purple · teal
-  [0x44ff77, 0x00d4ff, 0xffe94d],  // green · cyan · yellow
-  [0xff7700, 0xffe94d, 0xff3355],  // orange · yellow · red
-  [0xff55cc, 0x8855ff, 0xff3355],  // pink · purple · red
-  [0x3388ff, 0x00d4ff, 0x44ff77],  // blue · cyan · green
-  [0xff1166, 0xdd33ff, 0x8855ff],  // crimson · magenta · purple
-  [0xffe94d, 0x44ff77, 0x00ffbb],  // yellow · green · mint
-  [0xff6600, 0xff55cc, 0xffe94d],  // orange · pink · yellow
-  [0x00d4ff, 0x00ffbb, 0x3388ff],  // cyan · mint · blue
-  [0xff0088, 0xff55cc, 0x8855ff],  // hot-pink · pink · purple
-  [0x66ff33, 0xffe94d, 0x00d4ff],  // lime · yellow · cyan
+  [BRAND.hazard, 0x2e3744, 0xb8834f],  // hazard yellow · gunmetal · timber (brand)
+  [BRAND.orange, 0x3a4454, 0xb8834f],  // safety orange · steel blue-grey · timber
+  [0x9aa7b8,     BRAND.hazard, 0xa06a3a],  // galvanized · hazard yellow · dark timber
+  [0x2e6df6,     0x9aa7b8, 0xb8834f],  // powder-coat blue · galvanized · timber
+  [0xd94f2b,     0x2e3744, 0xc9974f],  // oxide red · gunmetal · pale timber
+  [0x3fae5a,     0x9aa7b8, 0xb8834f],  // safety green · galvanized · timber
+  [BRAND.hazard, BRAND.orange, 0x8a5a30],  // full hi-vis · dark timber
+  [0x54657a,     BRAND.hazard, 0xb8834f],  // slate steel · hazard yellow · timber
+  [0x1f8a8a,     0x9aa7b8, 0xc9974f],  // crane teal · galvanized · pale timber
+  [0xe8e3d5,     BRAND.orange, 0xa06a3a],  // painted white · safety orange · dark timber
+  [0x2e3744,     0xff4d2e, 0xb8834f],  // gunmetal · signal red-orange · timber
+  [0xffd84d,     0x54657a, 0x7ec850],  // bright yellow · slate · hi-vis green decking
 ]
+// Palette 0 (hazard yellow / gunmetal / timber) is the literal brand colorway —
+// pick it ~2x as often as a uniform draw would so the tower trends brand-yellow
+// without ever looking uniform. See design.md §2.3 / §7.
+function pickPiecePalette() {
+  if (Math.random() < 0.15) return PIECE_PALETTES[0]
+  return PIECE_PALETTES[Math.floor(Math.random() * PIECE_PALETTES.length)]
+}
 
 // Per-piece difficulty bucket — drives the colored border on the next-piece preview
 // so players can read what's coming at a glance.
@@ -159,7 +172,9 @@ export default function Game() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
-    renderer.setClearColor(0x120228)
+    // Night-shift industrial sky (design.md §7) — was a purple vaporwave void
+    // (0x120228) that clashed with the steel/asphalt HUD theme.
+    renderer.setClearColor(0x0b1220)
 
     // Kiosk insurance: an 8-hour booth session will occasionally lose the GL
     // context (driver reset, GPU pressure). Without this the canvas goes
@@ -189,7 +204,7 @@ export default function Game() {
     qrImg.src = '/qr.png'
 
     const scene = new THREE.Scene()
-    scene.fog = new THREE.FogExp2(0x120228, 0.018)
+    scene.fog = new THREE.FogExp2(0x0b1220, 0.018)
 
     let W = window.innerWidth
     let H = window.innerHeight
@@ -220,9 +235,13 @@ export default function Game() {
     }
     window.addEventListener('resize', onResize)
 
-    // Lights
-    scene.add(new THREE.AmbientLight(0xbb66ff, 0.65))
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.6)
+    // Lights — night-shift floodlit site (design.md §7). Warm key (the site
+    // floodlights) vs cool fill is the classic night-exterior formula; it makes
+    // the yellow/orange brand colors pop while steel and asphalt stay quiet.
+    // Was: violet ambient + magenta fill + cyan rim (vaporwave, off-brand).
+    const ambientLight = new THREE.AmbientLight(0x8fa3c7, 0.55)
+    scene.add(ambientLight)
+    const keyLight = new THREE.DirectionalLight(0xffe2b0, 1.7)
     keyLight.position.set(12, 35, 22)
     keyLight.castShadow = true
     // 1024 is plenty for a single directional caster at this scene scale and
@@ -233,10 +252,12 @@ export default function Game() {
       near: 0.5, far: 120, left: -25, right: 25, top: 80, bottom: -10,
     })
     scene.add(keyLight)
-    const fillLight = new THREE.DirectionalLight(0xff44ff, 0.45)
+    const fillLight = new THREE.DirectionalLight(0x4a6a9a, 0.4)
     fillLight.position.set(-12, 8, -5)
     scene.add(fillLight)
-    const rimLight = new THREE.DirectionalLight(0x44ffff, 0.3)
+    // Amber rim — agrees with the warm key + the site spotlights instead of
+    // fighting them with a cyan accent.
+    const rimLight = new THREE.DirectionalLight(0xffb347, 0.35)
     rimLight.position.set(6, 4, -12)
     scene.add(rimLight)
 
@@ -249,7 +270,7 @@ export default function Game() {
     // GPU memory cost per outline to nothing. The outline is local-static, so
     // we lock its matrix after the initial scale to skip per-frame
     // updateMatrix() calls on potentially thousands of children.
-    const outlineMat = new THREE.MeshBasicMaterial({ color: 0x110022, side: THREE.BackSide })
+    const outlineMat = new THREE.MeshBasicMaterial({ color: 0x0d1018, side: THREE.BackSide })
     const outline = (mesh, s = 1.07) => {
       const m = new THREE.Mesh(mesh.geometry, outlineMat)
       m.scale.setScalar(s)
@@ -348,10 +369,40 @@ export default function Game() {
       b.rotation.z = Math.atan2(h, w)
       return b
     }
+    // Scaffolding authenticity kit (design.md §2.4/§7) — small galvanized/
+    // hazard-yellow details at every pole/ledger joint. All ride the cached
+    // geometry map, so 8+ per piece cost near-zero extra GPU memory even
+    // across a 150-floor tower.
+    const GALV = 0x9aa7b8
+    // Coupler — the clamp where a pole meets a ledger, the single most
+    // recognizable real-scaffolding detail.
+    const coupler = (x, y, z) => {
+      const m = new THREE.Mesh(cachedGeo('coupler', () => new THREE.CylinderGeometry(0.13, 0.13, 0.24, 8)), toonMat(GALV))
+      m.position.set(x, y, z)
+      m.rotation.x = Math.PI / 2
+      m.castShadow = true
+      outline(m, 1.1)
+      return m
+    }
+    // End cap — brand-yellow safety cap on top of a standard.
+    const endCap = (x, y, z) => {
+      const m = new THREE.Mesh(cachedGeo('endcap', () => new THREE.SphereGeometry(0.17, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2)), toonMat(BRAND.hazard))
+      m.position.set(x, y, z)
+      m.castShadow = true
+      outline(m, 1.08)
+      return m
+    }
+    // Toe board — bright edge strip along a deck's outer (camera-facing) edge;
+    // doubles as a crisp landing-edge marker for the swing camera angle.
+    const toeBoard = (x, y, z, w) => {
+      const m = box(w, 0.1, 0.05, BRAND.hazard)
+      m.position.set(x, y, z)
+      return m
+    }
 
     function makePiece(type) {
       const g = new THREE.Group()
-      const palette = PIECE_PALETTES[Math.floor(Math.random() * PIECE_PALETTES.length)]
+      const palette = pickPiecePalette()
       const [a, b, c] = palette
       let pw = 4.4, ph = 2, pd = 2.6
 
@@ -362,6 +413,14 @@ export default function Game() {
         for (const x of [-1.4, -0.5, 0.4, 1.3]) g.add(board(x, 2.35, 0, 0.75, 2.1, c))
         g.add(ledger(0, 1.1, 1, 4.3, a)); g.add(ledger(0, 1.1, -1, 4.3, a))
         g.add(diag(-2, 0, 1, 4, 2.2, c)); g.add(diag(-2, 0, -1, 4, 2.2, c))
+        // Scaffolding authenticity kit — couplers at every pole/ledger joint,
+        // brand-yellow end caps on the standards, toe board on the
+        // camera-facing deck edge (design.md §2.4). The archetype piece gets
+        // it first; propagate to other builders next.
+        for (const [x, z] of [[-2, 1], [2, 1], [-2, -1], [2, -1]]) {
+          g.add(coupler(x, 2.2, z)); g.add(coupler(x, 1.1, z)); g.add(endCap(x, 2.2, z))
+        }
+        g.add(toeBoard(0, 2.5, 1.05, 4.3))
         pw = 4.4; ph = 2.5; pd = 2.2
       } else if (type === 'scaf_house') {
         for (const [x, z] of [[-2, 1], [2, 1], [-2, -1], [2, -1]]) g.add(pole(x, 0, z, 2.8, a))
@@ -1044,10 +1103,11 @@ export default function Game() {
 
     // World — Radian construction site
     {
-      // Asphalt pad the tower rises from
+      // Asphalt pad the tower rises from — cooled slightly to match the new
+      // night-navy sky (design.md §3/§7).
       const disc = new THREE.Mesh(
         new THREE.CylinderGeometry(11, 13, 1.4, 40),
-        toonMat(0x1a1a22)
+        toonMat(0x14161c)
       )
       disc.position.y = -0.7
       disc.receiveShadow = true
@@ -1057,13 +1117,14 @@ export default function Game() {
       // Painted concrete slab directly under the tower
       const pad = new THREE.Mesh(
         new THREE.CylinderGeometry(5.2, 5.2, 0.08, 32),
-        toonMat(0x4a4a55)
+        toonMat(0x3d434e)
       )
       pad.position.y = 0.02
       scene.add(pad)
 
-      // Yellow site striping radiating from pad
-      const stripeMat = new THREE.MeshBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.55 })
+      // Yellow site striping radiating from pad — unified to the brand hazard
+      // hex instead of a slightly-different generic yellow.
+      const stripeMat = new THREE.MeshBasicMaterial({ color: BRAND.hazard, transparent: true, opacity: 0.55 })
       for (let i = 0; i < 8; i++) {
         const ang = (i / 8) * Math.PI * 2
         const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.02, 0.35), stripeMat)
@@ -1077,7 +1138,9 @@ export default function Game() {
       const postCount = 18
       for (let i = 0; i < postCount; i++) {
         const ang = (i / postCount) * Math.PI * 2
-        const post = cyl(0.08, 0.08, 1.5, 5, 0xff6600)
+        // Slightly desaturated vs pure safety orange so the fence recedes
+        // behind the swinging piece instead of competing with it (design.md §3.3).
+        const post = cyl(0.08, 0.08, 1.5, 5, 0xe85d1a)
         post.position.set(Math.cos(ang) * fenceR, 0.75, Math.sin(ang) * fenceR)
         scene.add(post)
       }
@@ -1085,11 +1148,28 @@ export default function Game() {
       for (const yPos of [0.25, 1.35]) {
         const rail = new THREE.Mesh(
           new THREE.TorusGeometry(fenceR, 0.05, 4, 40),
-          toonMat(0xff7711)
+          toonMat(0xe85d1a)
         )
         rail.rotation.x = Math.PI / 2
         rail.position.y = yPos
         scene.add(rail)
+      }
+
+      // Festoon string lights along the fence top rail — warm "bulb" spheres
+      // (MeshBasicMaterial, no outline/shadow, shared geometry+material) that
+      // sell the night-shift mood for near-zero cost. Static is fine; this is
+      // set dressing, not an animated loop item (design.md §3.6).
+      {
+        const festoonGeo = cachedGeo('festoonBulb', () => new THREE.SphereGeometry(0.09, 6, 5))
+        const festoonMat = new THREE.MeshBasicMaterial({ color: 0xffd88a })
+        const festoonCount = 24
+        for (let i = 0; i < festoonCount; i++) {
+          const ang = (i / festoonCount) * Math.PI * 2
+          const sag = Math.sin(i * 1.7) * 0.05
+          const bulb = new THREE.Mesh(festoonGeo, festoonMat)
+          bulb.position.set(Math.cos(ang) * fenceR, 1.4 + sag, Math.sin(ang) * fenceR)
+          scene.add(bulb)
+        }
       }
 
       // Traffic cones around the slab
@@ -1135,13 +1215,14 @@ export default function Game() {
         scene.add(palletGroup)
       }
 
-      // Dumpster
+      // Dumpster — was green (no safety/brand meaning in this palette);
+      // repainted powder-coat blue to match the rental-fleet palette (design.md §3.4).
       {
         const dump = new THREE.Group()
-        const body = box(2.4, 1.2, 1.4, 0x228855)
+        const body = box(2.4, 1.2, 1.4, 0x2e6df6)
         body.position.y = 0.65
         dump.add(body)
-        const lid = box(2.4, 0.1, 1.4, 0x196644)
+        const lid = box(2.4, 0.1, 1.4, 0x1e4bb8)
         lid.position.y = 1.32
         lid.rotation.x = -0.15
         dump.add(lid)
@@ -1350,18 +1431,20 @@ export default function Game() {
       const w3 = makeWorker(0xffe94d, -2.2, -6.2, 0xffffff); w3.rotation.y =  Math.PI; workers.push(w3); scene.add(w3)
     }
 
-    // Glow ring
+    // Ground glow ring — floodlit-site pool of light under the tower. Was a
+    // purple/violet neon ring (design.md §7); warm amber reads as floodlight
+    // spill instead of a synthwave portal.
     {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(9.5, 11.5, 48),
-        new THREE.MeshBasicMaterial({ color: 0x7733ff, side: THREE.DoubleSide, transparent: true, opacity: 0.18 })
+        new THREE.MeshBasicMaterial({ color: BRAND.amber, side: THREE.DoubleSide, transparent: true, opacity: 0.12 })
       )
       ring.rotation.x = -Math.PI / 2
       ring.position.y = 0.05
       scene.add(ring)
       const ring2 = new THREE.Mesh(
         new THREE.RingGeometry(0, 9.5, 48),
-        new THREE.MeshBasicMaterial({ color: 0x4411aa, side: THREE.DoubleSide, transparent: true, opacity: 0.12 })
+        new THREE.MeshBasicMaterial({ color: 0xffdca0, side: THREE.DoubleSide, transparent: true, opacity: 0.06 })
       )
       ring2.rotation.x = -Math.PI / 2
       ring2.position.y = 0.04
@@ -1754,7 +1837,7 @@ export default function Game() {
         state.screenShake = Math.max(state.screenShake, 2.0)
         state.towerLeanX += (Math.random() - 0.5) * 3.5
         state.towerVelocity += (Math.random() - 0.5) * 0.45
-        spawnBurst(0, state.towerHeight / 2, 0, 20, [0xdd33ff, 0xff55cc, 0xff3355])
+        spawnBurst(0, state.towerHeight / 2, 0, 20, [BRAND.danger, BRAND.orange, 0xff8855])
         spawnChaosEventPopup('QUAKE!', '#dd33ff')
       } else if (evt === 'gravspike') {
         // Active for 180 frames — drop physics checks state.chaosEvent === 'gravspike'
@@ -1767,7 +1850,7 @@ export default function Game() {
           piece.rotation.z += (Math.random() - 0.5) * 0.22
         }
         state.screenShake = Math.max(state.screenShake, 1.5)
-        spawnBurst(0, state.towerHeight, 0, 22, [0xff55cc, 0xffe94d, 0xdd33ff])
+        spawnBurst(0, state.towerHeight, 0, 22, [BRAND.danger, BRAND.hazard, BRAND.orange])
         spawnChaosEventPopup('TILT STORM!', '#ff55cc')
       } else if (evt === 'wiresnap') {
         // Blow out the swing amplitude and kick the angle randomly
@@ -2189,13 +2272,14 @@ export default function Game() {
       return true
     }
 
-    // Expanding purple shockwave ring on impact — distinct from landing particles
-    // so the player instantly reads "I got hit" instead of "I landed."
+    // Expanding shockwave ring on impact — distinct from landing particles so
+    // the player instantly reads "I got hit" instead of "I landed." Signal
+    // red-orange is danger vocabulary (design.md §6) — was neon magenta.
     function spawnShockwave(x, y) {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.6, 0.85, 32),
         new THREE.MeshBasicMaterial({
-          color: 0xff44ff,
+          color: BRAND.danger,
           transparent: true,
           opacity: 0.95,
           side: THREE.DoubleSide,
@@ -2235,7 +2319,7 @@ export default function Game() {
       state.screenShake = Math.max(state.screenShake, 0.55)
       buzz(35)
       spawnShockwave(pj.mesh.position.x, pj.mesh.position.y)
-      spawnBurst(pj.mesh.position.x, pj.mesh.position.y, 0, 22, [0xcc66ff, 0xff88ff, 0xffffff, 0x9966ff, 0xff44ff])
+      spawnBurst(pj.mesh.position.x, pj.mesh.position.y, 0, 22, [BRAND.danger, 0xff8855, 0xffffff, BRAND.orange, 0xff6633])
     }
 
     // Crack/scorch decal — parented to the hit piece so it stays glued to the
@@ -2550,7 +2634,10 @@ export default function Game() {
         }
       }
 
-      const burst = [0xffe94d, 0xff44ff, 0x44ffcc, 0xff4444, 0x44ff77]
+      // Warm welding-spark burst (design.md §6) — was a rainbow confetti mix
+      // that clashed with the industrial palette; yellow-white-orange reads
+      // as workmanship rather than a generic arcade pop.
+      const burst = [BRAND.hazard, 0xffffff, BRAND.orange, BRAND.amberBright, 0xffb347]
       spawnBurst(lx, state.towerHeight + ph / 2, 0, perf ? 30 : isMiss ? 8 : 18, burst)
       // Haptic land cue — perfect gets a double-tap pattern.
       buzz(perf ? [15, 30, 25] : 20)
@@ -3690,10 +3777,14 @@ export default function Game() {
         if (state.flash < 0.02) state.flash = 0
       }
       if (state.frameN % 2 === 0) {
+        // Night-shift sky breathe (design.md §5/§7) — standard pulses gently
+        // around the steel-navy night sky (0x0b1220); chaos shifts toward a
+        // storm red-black undertone; condemned sinks to a near-black "dead
+        // site" pulse. Was a purple/magenta cycle that clashed with the theme.
         const t = state.frameN * (state.condemnedMode ? 0.018 : state.chaosMode ? 0.010 : 0.003)
-        const baseR = state.condemnedMode ? 0.30 + Math.sin(t) * 0.14 : state.chaosMode ? 0.22 + Math.sin(t) * 0.10 : 0.10 + Math.sin(t) * 0.03
-        const baseG = state.condemnedMode ? 0.00 : state.chaosMode ? 0.01 + Math.sin(t * 1.3) * 0.01 : 0.02
-        const baseB = state.condemnedMode ? 0.00 + Math.sin(t * 0.7) * 0.02 : state.chaosMode ? 0.04 + Math.sin(t * 0.9) * 0.03 : 0.28 + Math.sin(t * 0.7) * 0.06
+        const baseR = state.condemnedMode ? 0.024 + Math.sin(t) * 0.012 : state.chaosMode ? 0.10 + Math.sin(t) * 0.05 : 0.043 + Math.sin(t) * 0.015
+        const baseG = state.condemnedMode ? 0.024 + Math.sin(t * 0.8) * 0.008 : state.chaosMode ? 0.043 + Math.sin(t * 1.3) * 0.015 : 0.070 + Math.sin(t * 0.8) * 0.015
+        const baseB = state.condemnedMode ? 0.031 + Math.sin(t * 0.7) * 0.010 : state.chaosMode ? 0.063 + Math.sin(t * 0.9) * 0.02 : 0.125 + Math.sin(t * 0.7) * 0.02
         const f = state.flash
         _scratchClearColor.setRGB(
           baseR + (1 - baseR) * f,
